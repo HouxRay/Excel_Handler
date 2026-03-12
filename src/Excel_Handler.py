@@ -76,17 +76,21 @@ class ExcelHandler:
         return bases
 
     def _is_valid_base(self, values):
-        """验证基准格式：数字 文字 文字 空"""
+        """验证基准格式：数字 文字 文字 空
+        修改：允许第二个文字列为空（处理合并单元格的情况）
+        """
         try:
             # 验证数字列
             if not isinstance(values[0], (int, float)):
                 if not str(values[0]).isdigit():
                     return False
             
-            # 验证文字列
-            for i in range(1, 3):
-                if values[i] in (None, ""):
-                    return False
+            # 验证第一个文字列（不能为空）
+            if values[1] in (None, ""):
+                return False
+            
+            # 修改：第二个文字列可以为空（允许合并单元格的情况）
+            # 如果第二个文字列不为空，继续处理，但不强制要求
             
             # 验证空列
             if values[3] not in (None, ""):
