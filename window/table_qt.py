@@ -337,7 +337,7 @@ class EnhancedDataEditor(QMainWindow):
     def export_data(self):
         """
         导出数据
-        """
+        """       
         self.save_changes()
         selected_item = self.radio_group.checkedButton().text()
         export_list = {
@@ -372,11 +372,14 @@ class EnhancedDataEditor(QMainWindow):
                 if line_location is None or column_location is None:
                     logger.error(f"get_location 返回 None for key={key}, ex_header={ex_header}")
                     continue
-                self.writer.write_info(line_location, column_location, value=pre_scores)
+                is_written = self.writer.write_info(line_location, column_location, value=pre_scores)
+                if is_written == 0:
+                    logger.warning(f'*{header}* 写入失败')
+                    return 0
             except Exception as e:
                 logger.exception(f"*{header}* 写入失败 - 键: {key}")
-                continue
-        logger.info(f'*{header}* 写入完成')
+                return 0
+        logger.info(f'*{header}* 写入完成')   
 
         return export_list
     
