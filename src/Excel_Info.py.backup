@@ -1,0 +1,169 @@
+import src.Excel_Handler as Excel_Handler
+import src.File_Reader as File_Reader
+from src.Name_Matcher import NameMatcher
+from openpyxl import load_workbook
+from typing import List, Dict, Union
+from pathlib import Path
+
+
+class GetWriteInfo:
+    def __init__(self, file_path: Union[str, Path], excel_path: Union[str, Path]):
+        """
+        file_path: html文件路径
+
+        excel_path: excel文件路径
+        """
+
+        self.file_path = file_path
+        self.excel_path = excel_path
+        self.file_reader = File_Reader.FileReader(file_path = file_path)
+        self.excel_handler = Excel_Handler.ExcelHandler(excel_path)
+        self.name_matcher = NameMatcher(file_path=file_path, excel_path=excel_path)
+        self.file_path = Path(file_path)
+        self.wb = load_workbook(filename=self.excel_path)
+        self.ws = self.wb.active
+        self.pre_mapping = {}
+        with open("mapping/mapping_data.txt", "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()  # 去除首尾空格和换行
+                if line and "：" in line:
+                    value, key = line.split("：", 1)  # 只分割第一个冒号
+                    self.pre_mapping[key.strip()] = value.strip()
+        
+    
+    def get_file_and_excel_info(self):
+        """
+        获取文件列表与excel表格第一列数据
+        """
+        try:
+            # 尝试调用 NameMatcher 实例的 name_extractor 方法
+            files_names, excel_first_columns = self.name_matcher.name_extractor()
+            return files_names, excel_first_columns
+        except Exception as e:
+            # 捕获并处理可能出现的异常
+            print(f"An error occurred while extracting names: {e}")
+            return [], []
+        
+        
+    def get_header_bases(self):
+        """
+        获取excel表格的表头基准
+        """
+        try:
+            # 尝试调用 ExcelHandler 实例的 read_header_bases 方法
+            header_bases = self.excel_handler.read_header_bases()
+            return header_bases
+        except Exception as e:
+            # 捕获并处理可能出现的异常
+            print(f"An error occurred while reading header bases: {e}")
+            return []
+        
+    def get_tabel_info(self):
+        """
+        获取表格基本信息
+        """
+        try:
+            tabel_info = []
+            # 尝试调用 ExcelHandler 实例的 read_header_bases 方法
+            header_bases = self.excel_handler.read_header_bases()
+            for info in header_bases:
+                if info[1] == None or info[1] == '':
+                    continue
+                temp = info[:3]
+                if info[2] is not None and info[2] != '':
+                    temp[1] = info[1]+"vs"+info[2]    
+                    temp.pop()
+                else:
+                    temp[1] = info[1]
+                    temp.pop()         
+                while 1:
+                    temp.append('')
+                    if len(temp) == 7:
+                        break
+                tabel_info.append(temp)
+
+            return tabel_info
+        except Exception as e:
+            # 捕获并处理可能出现的异常
+            print(f"An error occurred while reading header bases: {e}")
+            return []
+        
+
+    def get_mapping(self):
+        """
+        获取匹配结果
+        """
+        try:
+            # 尝试调用 NameMatcher 实例的 create_mapping 方法
+            files_names, _ = self.get_file_and_excel_info()
+            mapping = self.name_matcher.create_mapping_v2(files_names, self.pre_mapping)
+            return mapping  # 返回映射结果
+        except Exception as e:
+            # 捕获并处理可能出现的异常
+            print(f"An error occurred while creating mapping: {e}")
+            return {}  # 返回空字典表示映射失败
+
+
+    def get_location(self, mapping_value: str = None, excel_first_num: str = None, excel_first_columns: Union[str, List[str]] = None) -> int:
+        """
+        获取写入信息的坐标 
+        """     
+        try:  
+            if mapping_value and excel_first_num and excel_first_columns:
+                # _, excel_first_columns = self.get_file_and_excel_info()
+                line_location = excel_first_columns[mapping_value]
+                column_location = (int(excel_first_num)-1) * 4 + 2
+                return line_location, column_location
+            
+            elif excel_first_num:
+                column_location = (int(excel_first_num)-1) * 4 + 2
+                return None, column_location
+            
+        except Exception as e:
+            # 捕获并处理可能出现的异常
+            print(f"An error occurred while getting location: {e}")
+            pass
+
+    def get_file_dict(self):
+        """
+        获取文件字典
+        """
+        try:
+            # 尝试调用 File_Reader 实例的 file_dict 方法
+            file_dict = self.file_reader.file_dict()
+            return file_dict
+        except Exception as e:
+            # 捕获并处理可能出现的异常
+            print(f"An error occurred while getting file dict: {e}")
+            return {}  # 返回空字典表示文件字典获取失败
+        
+    def get_json(self, json_path):
+        """
+        获取json文件
+        """
+        import json
+        # 读取JSON文件
+        with open(json_path, 'r', encoding='utf-8') as f:
+            loaded_data = json.load(f)
+
+        return loaded_data
+
+
+if __name__ == "__main__":
+    ew = GetWriteInfo("src\\2025-03-03-竞彩", "src\sample.xlsx")
+    files_names, excel_first_columns = ew.get_file_and_excel_info()
+    mapping = ew.get_mapping()
+    # print(1)
+    # print(ew.get_location(mapping_value="八神竞猜", excel_first_num="001", excel_first_columns = excel_first_columns))
+    # print(files_names)
+    # print('-'*50)
+    # print(excel_first_columns)
+    # print('-'*50)
+    print(mapping)
+    print(ew.pre_mapping)
+    # print('-'*50)
+    # print(ew.get_header_bases())
+    # print('-'*50)
+    # print(ew.get_tabel_info())
+    # print('-'*50)
+    # print(ew.get_file_dict())
