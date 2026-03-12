@@ -49,15 +49,26 @@ def setup_logger(text_widget=None):
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.INFO)
     
-    # 添加处理器
-    logger.addHandler(file_handler)
-    logger.addHandler(console_handler)
+    # 防止重复添加处理器
+    if not logger.handlers:
+        # 添加处理器
+        logger.addHandler(file_handler)
+        logger.addHandler(console_handler)
     
     # 如果提供了文本窗口，添加GUI处理器
     if text_widget:
-        gui_handler = QTextEditLogger(text_widget)
-        gui_handler.setFormatter(formatter)
-        logger.addHandler(gui_handler)
+        # 检查是否已经添加了GUI处理器
+        gui_handler_exists = any(
+            isinstance(h, QTextEditLogger) and h.text_widget == text_widget 
+            for h in logger.handlers
+        )
+        if not gui_handler_exists:
+            gui_handler = QTextEditLogger(text_widget)
+            gui_handler.setFormatter(formatter)
+            logger.addHandler(gui_handler)
+    
+    # 禁用日志传播，防止重复输出
+    logger.propagate = False
     
     return logger
 

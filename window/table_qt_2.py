@@ -31,9 +31,14 @@ def setup_logger(text_widget=None):
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.INFO)
     
-    # 添加处理器
-    logger.addHandler(file_handler)
-    logger.addHandler(console_handler)
+    # 防止重复添加处理器
+    if not logger.handlers:
+        # 添加处理器
+        logger.addHandler(file_handler)
+        logger.addHandler(console_handler)
+    
+    # 禁用日志传播，防止重复输出
+    logger.propagate = False
     
     return logger
 
