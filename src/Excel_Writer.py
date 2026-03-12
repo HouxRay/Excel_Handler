@@ -5,6 +5,20 @@ from src.Excel_Info import GetWriteInfo
 from PyQt5.QtWidgets import QMessageBox, QApplication
 import sys
 
+MATCH_DICT={
+    "s":"胜",
+    'ss':'胜胜',
+    "rs":"让胜",
+    "f":"负",
+    "rf":"让负",
+    "p":"平",
+    "rp":"让平",
+    "sp":"双平",
+    "q":"平",
+    "rq":"让平",
+    "sq":"双平",
+    "fsf":"分胜负",
+}
 
 class ExcelWriter:
     def __init__(self, excel_path: str):
@@ -46,20 +60,7 @@ class ExcelWriter:
             return {'valid': True, 'message': '验证通过'}
         
         # 检查是否在match_dict中
-        match_dict = {
-            "s": "胜",
-            'ss': '胜胜',
-            "rs": "让胜",
-            "f": "负",
-            "rf": "让负",
-            "p": "平",
-            "rp": "让平",
-            "sp": "双平",
-            "q": "平",
-            "rq": "让平",
-            "sq": "双平",
-            "fsf": "分胜负",
-        }
+        match_dict = MATCH_DICT
         
         if item_str.lower() in match_dict:
             return {'valid': True, 'message': '验证通过'}
@@ -80,26 +81,13 @@ class ExcelWriter:
         - cheak_empty: 是否检查空值，默认 False
         """
         
-        match_dict={
-            "s":"胜",
-            'ss':'胜胜',
-            "rs":"让胜",
-            "f":"负",
-            "rf":"让负",
-            "p":"平",
-            "rp":"让平",
-            "sp":"双平",
-            "q":"平",
-            "rq":"让平",
-            "sq":"双平",
-            "fsf":"分胜负",
-        }
+        match_dict=MATCH_DICT
         
         try:
             if isinstance(value, list):
                 # 处理列表数据（横向连续写入）
                 if not any(value):  # 遇到空值停止写入
-                    return  # 直接退出不写入
+                    return  1# 直接退出不写入
                 for idx, item in enumerate(value):
                     if item is None or item == "":  # 遇到空值跳过
                         continue
@@ -112,19 +100,19 @@ class ExcelWriter:
                         reply = QMessageBox.question(self.app.activeWindow(), '验证失败', message,
                                                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
                         if reply == QMessageBox.No:
-                            return  # 用户选择不继续
+                            return  0# 用户选择不继续
                         continue  # 跳过这个项目
                     
                     # 显示确认对话框
-                    position = f"({line_location}, {column_location + idx})"
-                    message = f"确认写入到位置 {position}？\n数据: {item}"
-                    if item.lower() in match_dict.keys():
-                        message += f" -> {match_dict[item.lower()]}"
+                    # position = f"({line_location}, {column_location + idx})"
+                    # message = f"确认写入到位置 {position}？\n数据: {item}"
+                    if item.lower() in MATCH_DICT.keys():
+                        message += f" -> {MATCH_DICT[item.lower()]}"
                     
                     # reply = QMessageBox.question(self.app.activeWindow(), '确认写入', message,
                     #                            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
-                    if reply == QMessageBox.No:
-                        continue  # 用户取消，跳过这个项目
+                    # if reply == QMessageBox.No:
+                    #     continue  # 用户取消，跳过这个项目
                     
                     # 计算当前单元格位置
                     current_col = column_location + idx
@@ -140,6 +128,7 @@ class ExcelWriter:
                     # 写入并保存
                     target_cell.value = item
                 self.workbook.save(self.excel_path)
+                return  1# 写入成功
 
             elif isinstance(value, (int, str)):
                 # 处理单个数据（int/str）
@@ -151,7 +140,7 @@ class ExcelWriter:
                     reply = QMessageBox.question(self.app.activeWindow(), '验证失败', message,
                                                QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
                     if reply == QMessageBox.Yes:
-                        return  # 用户选择取消写入
+                        return  0 # 用户选择取消写入
                 
                 # 显示确认对话框
                 position = f"({line_location}, {column_location})"
@@ -163,14 +152,14 @@ class ExcelWriter:
                 reply = QMessageBox.question(self.app.activeWindow(), '确认写入', message,
                                            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
                 if reply == QMessageBox.No:
-                    return  # 用户取消写入
+                    return  0# 用户取消写入
                 
                 target_cell = self.ws.cell(row=line_location, column=column_location)
 
                 # 检查单元格是否已有非空字符串
                 if isinstance(target_cell.value, str) and target_cell.value.strip() and cheak_empty:
                     print(f"跳过写入 ({line_location}, {column_location}): 已有数据 '{target_cell.value}'")
-                    return  # 直接退出不写入
+                    return  0# 直接退出不写入
 
                 # 写入并保存
                 if str(value).lower() in match_dict.keys():
@@ -178,6 +167,7 @@ class ExcelWriter:
                 else:
                     target_cell.value = value
                 self.workbook.save(self.excel_path)
+                return  1# 写入成功
 
             elif isinstance(value, dict):
                 current_line = line_location
@@ -220,6 +210,7 @@ class ExcelWriter:
                     target_score.value = key
                     target_count.value = val
                 self.workbook.save(self.excel_path)
+                return  1# 写入成功
 
             else:
                 raise ValueError("不支持的数据类型，仅允许 int/str/list/dict")

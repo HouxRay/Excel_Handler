@@ -143,9 +143,8 @@ class GetWriteInfo:
             if header_num in self.header_num_to_column:
                 header_col = self.header_num_to_column[header_num]
                 # 数据列在表头列的右侧，每4列一组
-                # 假设数据在表头右侧第1列开始（跳过表头列）
                 column_location = header_col
-                print(f"DEBUG: 使用新逻辑: 表头数字 {header_num} -> 表头列 {header_col} -> 数据列 {column_location}")
+                # print(f"DEBUG: 使用新逻辑: 表头数字 {header_num} -> 表头列 {header_col} -> 数据列 {column_location}")
             else:
                 # 回退到旧逻辑（保持兼容性）
                 print(f"DEBUG: header_num '{header_num}' 不在 header_num_to_column 中")
