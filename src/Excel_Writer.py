@@ -121,8 +121,8 @@ class ExcelWriter:
                     if item.lower() in match_dict.keys():
                         message += f" -> {match_dict[item.lower()]}"
                     
-                    reply = QMessageBox.question(self.app.activeWindow(), '确认写入', message,
-                                               QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+                    # reply = QMessageBox.question(self.app.activeWindow(), '确认写入', message,
+                    #                            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
                     if reply == QMessageBox.No:
                         continue  # 用户取消，跳过这个项目
                     
