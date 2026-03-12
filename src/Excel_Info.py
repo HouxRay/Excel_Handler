@@ -7,21 +7,29 @@ from pathlib import Path
 
 
 class GetWriteInfo:
-    def __init__(self, file_path: Union[str, Path], excel_path: Union[str, Path]):
+    def __init__(self, file_path: Union[str, Path], excel_path: Union[str, Path], sheet_name: str = None):
         """
         file_path: html文件路径
-
         excel_path: excel文件路径
+        sheet_name: Excel sheet名称，如果为None则使用活动sheet
         """
 
         self.file_path = file_path
         self.excel_path = excel_path
+        self.sheet_name = sheet_name
         self.file_reader = File_Reader.FileReader(file_path = file_path)
-        self.excel_handler = Excel_Handler.ExcelHandler(excel_path)
+        self.excel_handler = Excel_Handler.ExcelHandler(excel_path, sheet_name)
         self.name_matcher = NameMatcher(file_path=file_path, excel_path=excel_path)
         self.file_path = Path(file_path)
         self.wb = load_workbook(filename=self.excel_path)
-        self.ws = self.wb.active
+        
+        # 使用指定的sheet或活动sheet
+        if sheet_name and sheet_name in self.wb.sheetnames:
+            self.ws = self.wb[sheet_name]
+        else:
+            self.ws = self.wb.active
+            if sheet_name:
+                print(f"警告: sheet '{sheet_name}' 不存在，使用活动sheet: {self.ws.title}")
         self.pre_mapping = {}
         with open("mapping/mapping_data.txt", "r", encoding="utf-8") as f:
             for line in f:

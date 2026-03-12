@@ -21,17 +21,26 @@ MATCH_DICT={
 }
 
 class ExcelWriter:
-    def __init__(self, excel_path: str):
+    def __init__(self, excel_path: str, sheet_name: str = None):
         """
         Excel 写入器
-        :param file_path: 文件路径
         :param excel_path: Excel 文件路径
+        :param sheet_name: 要写入的工作表名称，如果为None则使用活动工作表
         """
-        # self.file_path = file_path
         self.excel_path = excel_path
         self.workbook = load_workbook(self.excel_path)
-        # self.writer_info = GetWriteInfo(file_path, excel_path)
-        self.ws = self.workbook.active
+        
+        # 根据sheet_name参数选择工作表
+        if sheet_name:
+            # 检查工作表是否存在
+            if sheet_name in self.workbook.sheetnames:
+                self.ws = self.workbook[sheet_name]
+            else:
+                # 如果工作表不存在，创建它
+                self.ws = self.workbook.create_sheet(title=sheet_name)
+        else:
+            # 如果没有指定sheet_name，使用活动工作表
+            self.ws = self.workbook.active
         
         # 初始化 QApplication（如果不存在）
         self.app = QApplication.instance()
@@ -106,8 +115,8 @@ class ExcelWriter:
                     # 显示确认对话框
                     # position = f"({line_location}, {column_location + idx})"
                     # message = f"确认写入到位置 {position}？\n数据: {item}"
-                    if item.lower() in MATCH_DICT.keys():
-                        message += f" -> {MATCH_DICT[item.lower()]}"
+                    # if item.lower() in MATCH_DICT.keys():
+                    #     message += f" -> {MATCH_DICT[item.lower()]}"
                     
                     # reply = QMessageBox.question(self.app.activeWindow(), '确认写入', message,
                     #                            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)

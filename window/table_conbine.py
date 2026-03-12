@@ -15,7 +15,7 @@ def run():
     if result != QDialog.Accepted:
         return  # 用户取消选择
     
-    folder_path, excel_path, json_path = path_selector.selected_paths
+    folder_path, excel_path, json_path, sheet_name = path_selector.selected_paths
     
     # 验证路径有效性
     if not folder_path or not excel_path:
@@ -31,7 +31,8 @@ def run():
         # 第三步：显示主窗口
         main_window = EnhancedDataEditor(excel_path = excel_path,
                                          file_path = folder_path,
-                                         json_path = json_path)
+                                         json_path = json_path,
+                                         sheet_name = sheet_name)
         main_window.show()
         
         sys.exit(app.exec_())

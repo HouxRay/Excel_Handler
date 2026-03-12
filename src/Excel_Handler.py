@@ -2,10 +2,17 @@ from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 
 class ExcelHandler:
-    def __init__(self, file_path):
+    def __init__(self, file_path, sheet_name: str = None):
         self.file_path = file_path
         self.wb = load_workbook(filename=file_path, read_only=True, data_only=True)
-        self.ws = self.wb.active
+        
+        # 使用指定的sheet或活动sheet
+        if sheet_name and sheet_name in self.wb.sheetnames:
+            self.ws = self.wb[sheet_name]
+        else:
+            self.ws = self.wb.active
+            if sheet_name:
+                print(f"警告: sheet '{sheet_name}' 不存在，使用活动sheet: {self.ws.title}")
     
     def read_first_column(self):
         """读取第一列数据（从第二行开始）"""

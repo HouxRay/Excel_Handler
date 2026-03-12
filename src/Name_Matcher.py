@@ -4,7 +4,7 @@ from typing import Union, List, Dict
 from pathlib import Path
 
 class NameMatcher:
-    def __init__(self, file_path: Union[str, Path], excel_path: Union[str, Path], match_mode: str = "contains"):
+    def __init__(self, file_path: Union[str, Path], excel_path: Union[str, Path], match_mode: str = "contains", sheet_name: str = None):
         """
         中文专用列表匹配器
         
@@ -12,10 +12,11 @@ class NameMatcher:
             - "contains"：子字符串包含模式（默认）
             - "startswith"：开头匹配模式
             - "endswith"：结尾匹配模式
+        :param sheet_name: Excel sheet名称，如果为None则使用活动sheet
         """
         self.file_path = file_path
         self.file_reader = fr.FileReader(file_path)
-        self.excel_handler = eh.ExcelHandler(excel_path)
+        self.excel_handler = eh.ExcelHandler(excel_path, sheet_name)
         self.match_mode = match_mode
         self._validate_mode()
 

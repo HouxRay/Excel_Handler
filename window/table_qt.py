@@ -98,7 +98,8 @@ class EnhancedDataEditor(QMainWindow):
                  excel_name:list = None, 
                  excel_path:str = None, 
                  file_path:str = None,
-                 json_path:str = None):
+                 json_path:str = None,
+                 sheet_name:str = None):
         """
         top_data：队伍数据
         left_items：html文件名称
@@ -106,6 +107,7 @@ class EnhancedDataEditor(QMainWindow):
         excel_path：excel文件路径
         file_path：html文件路径
         json_path：json文件路径（用于二次整理时引入新数据）
+        sheet_name：Excel sheet名称
         """
         super().__init__()
         self.setWindowTitle("Doro统治世界")
@@ -122,7 +124,7 @@ class EnhancedDataEditor(QMainWindow):
             logger.exception("设置窗口图标时发生错误")
         
         if top_data is None or left_items is None or excel_name is None:
-            self.get_info = GetWriteInfo(file_path, excel_path)
+            self.get_info = GetWriteInfo(file_path, excel_path, sheet_name)
             top_data = self.get_info.get_tabel_info()
             left_items, excel_name = self.get_info.get_file_and_excel_info()
         # 初始化数据
@@ -149,7 +151,7 @@ class EnhancedDataEditor(QMainWindow):
         
         # 初始化Excel相关对象
         if self.flag:
-            self.writer = ExcelWriter(excel_path)
+            self.writer = ExcelWriter(excel_path, sheet_name)
             self.excel_first_columns = excel_name  # 实际上是 excel_first_columns 字典
             self.mapping = self.get_info.get_mapping()
             self.header_bases = self.get_info.get_header_bases()
@@ -212,33 +214,88 @@ class EnhancedDataEditor(QMainWindow):
         right_layout.addWidget(self.table)
     
 
-        # 按钮区域
+        # 按钮区域 - 重新设计布局
+        # 顶部按钮行：重新选择路径按钮放在左上角
+        top_btn_layout = QHBoxLayout()
+        reload_btn = QPushButton("🔄 重新选择路径")
+        reload_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                font-weight: bold;
+                padding: 8px 16px;
+                border-radius: 6px;
+                border: 2px solid #45a049;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+                border: 2px solid #3d8b40;
+            }
+            QPushButton:pressed {
+                background-color: #3d8b40;
+            }
+        """)
+        reload_btn.clicked.connect(self.reload_paths)
+        top_btn_layout.addWidget(reload_btn)
+        top_btn_layout.addStretch()  # 将按钮推到左侧
+        
+        # 主功能按钮行
         btn_layout = QHBoxLayout()
-        open_btn = QPushButton("打开")
-        refresh_btn = QPushButton("刷新")
-        save_btn = QPushButton("保存")
-        export_btn = QPushButton("导出")
-        sort_btn = QPushButton("排序")
-        json_btn = QPushButton("写入JSON")
-        reload_btn = QPushButton("重新选择路径")
         
+        # 创建功能按钮
+        open_btn = QPushButton("📂 打开")
+        refresh_btn = QPushButton("🔄 刷新")
+        save_btn = QPushButton("💾 保存")
+        export_btn = QPushButton("📤 导出")
+        sort_btn = QPushButton("📊 排序")
+        json_btn = QPushButton("📝 写入JSON")
         
+        # 设置按钮样式
+        button_style = """
+            QPushButton {
+                background-color: #2196F3;
+                color: white;
+                font-weight: bold;
+                padding: 6px 12px;
+                border-radius: 4px;
+                border: 1px solid #1976D2;
+                min-width: 80px;
+            }
+            QPushButton:hover {
+                background-color: #1976D2;
+                border: 1px solid #1565C0;
+            }
+            QPushButton:pressed {
+                background-color: #1565C0;
+            }
+        """
+        
+        open_btn.setStyleSheet(button_style)
+        refresh_btn.setStyleSheet(button_style)
+        save_btn.setStyleSheet(button_style)
+        export_btn.setStyleSheet(button_style)
+        sort_btn.setStyleSheet(button_style)
+        json_btn.setStyleSheet(button_style)
+        
+        # 连接信号
         refresh_btn.clicked.connect(self.refresh_table)
         save_btn.clicked.connect(self.save_changes)
         export_btn.clicked.connect(self.export_data)
         open_btn.clicked.connect(self.on_open_clicked)
         sort_btn.clicked.connect(self.sort)
         json_btn.clicked.connect(self.export_json)
-        reload_btn.clicked.connect(self.reload_paths)
         
+        # 添加按钮到布局
         btn_layout.addWidget(open_btn)
         btn_layout.addWidget(refresh_btn)
         btn_layout.addWidget(save_btn)
         btn_layout.addWidget(export_btn)
-        btn_layout.addWidget(reload_btn)
-        right_layout.addLayout(btn_layout)       
         btn_layout.addWidget(sort_btn)
         btn_layout.addWidget(json_btn)
+        
+        # 添加布局到右侧布局
+        right_layout.addLayout(top_btn_layout)
+        right_layout.addLayout(btn_layout)
         
         main_layout.addLayout(right_layout)
         self.setCentralWidget(main_widget)
@@ -445,17 +502,18 @@ class EnhancedDataEditor(QMainWindow):
             result = path_selector.exec_()
             
             if result == QDialog.Accepted:
-                folder_path, excel_path, json_path = path_selector.selected_paths
+                folder_path, excel_path, json_path, sheet_name = path_selector.selected_paths
                 
                 # 验证路径有效性
-                if not folder_path or not excel_path:
-                    QMessageBox.critical(None, "错误", "必须选择有效的文件夹和Excel文件路径")
+                if not folder_path or not excel_path or not sheet_name:
+                    QMessageBox.critical(None, "错误", "必须选择有效的文件夹、Excel文件和sheet")
                     return
                 
                 # 创建新的主窗口实例
                 new_window = EnhancedDataEditor(excel_path=excel_path,
                                                file_path=folder_path,
-                                               json_path=json_path)
+                                               json_path=json_path,
+                                               sheet_name=sheet_name)
                 new_window.show()
                 
         except Exception as e:
