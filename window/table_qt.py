@@ -470,7 +470,7 @@ class EnhancedDataEditor(QMainWindow):
             
             for column, contents in dict_counter.items():
                 try:
-                    _, column_location = self.get_info.get_location(excel_first_num=column) 
+                    _, column_location = self.get_info.get_location(header_num=column) 
                     self.writer.write_info(84, column_location, contents)
                 except Exception as e:
                     logger.exception(f"排序写入失败 - 列: {column}")

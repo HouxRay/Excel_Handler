@@ -112,17 +112,6 @@ class ExcelWriter:
                             return  0# 用户选择不继续
                         continue  # 跳过这个项目
                     
-                    # 显示确认对话框
-                    # position = f"({line_location}, {column_location + idx})"
-                    # message = f"确认写入到位置 {position}？\n数据: {item}"
-                    # if item.lower() in MATCH_DICT.keys():
-                    #     message += f" -> {MATCH_DICT[item.lower()]}"
-                    
-                    # reply = QMessageBox.question(self.app.activeWindow(), '确认写入', message,
-                    #                            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
-                    # if reply == QMessageBox.No:
-                    #     continue  # 用户取消，跳过这个项目
-                    
                     # 计算当前单元格位置
                     current_col = column_location + idx
                     target_cell = self.ws.cell(row=line_location, column=current_col)
@@ -184,32 +173,6 @@ class ExcelWriter:
                 # 处理字典数据（纵向连续写入）
                 for idx, (key, val) in enumerate(value.items()):
                     if val is None or val == "":  # 遇到空值停止写入  key: 001 val:{'12': 2, '22': 2, '42': 2, '33': 1, '15': 1, '41': 1, '25': 1}
-                        continue
-
-                    # 验证键和值
-                    key_validation = self._validate_item(str(key))
-                    val_validation = self._validate_item(str(val))
-                    
-                    if not key_validation['valid'] or not val_validation['valid']:
-                        message = f"位置 ({current_line + idx}, {current_col}) 写入失败:\n"
-                        if not key_validation['valid']:
-                            message += f"键 '{key}': {key_validation['message']}\n"
-                        if not val_validation['valid']:
-                            message += f"值 '{val}': {val_validation['message']}\n"
-                        message += "\n是否继续写入其他数据？"
-                        reply = QMessageBox.question(self.app.activeWindow(), '验证失败', message,
-                                                   QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-                        if reply == QMessageBox.No:
-                            return
-                        continue
-                    
-                    # 显示确认对话框
-                    position = f"({current_line + idx}, {current_col})"
-                    message = f"确认写入到位置 {position}？\n数据: {key} -> {val}"
-                    
-                    reply = QMessageBox.question(self.app.activeWindow(), '确认写入', message,
-                                               QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
-                    if reply == QMessageBox.No:
                         continue
 
                     # 计算当前单元格位置

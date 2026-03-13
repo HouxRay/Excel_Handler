@@ -22,7 +22,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='main',
+    name='Excel誊写器2.0',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
