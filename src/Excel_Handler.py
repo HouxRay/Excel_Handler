@@ -22,15 +22,15 @@ class ExcelHandler:
         
         for row in self.ws.iter_rows(min_row=2, max_col=1):
             cell_value = row[0].value
-            
+
             if cell_value in (None, ""):
                 empty_counter += 1
-                if empty_counter > 2:
+                if empty_counter > 50:
                     break
             else:
                 empty_counter = 0
                 column_data[cell_value] = current_row
-            
+
             current_row += 1
         
         return column_data

@@ -4,6 +4,39 @@
 
 ---
 
+## 2026-05-13 — 键盘输入优化、数据源切换、版本号
+
+### 1. 空格/反引号代替 0 输入
+
+**文件：** [window/table_qt.py](window/table_qt.py)
+
+- **问题：** 无小键盘用户输入 "0" 时手部别扭
+- **修复：** 新增 `CustomTableWidget(QTableWidget)` 子类，重写 `keyPressEvent`：编辑时按空格键或反引号键自动插入 "0"，其他按键正常
+
+### 2. HTML/图片 数据源切换
+
+**文件：** [window/table_qt.py](window/table_qt.py)、[src/Excel_Handler.py](src/Excel_Handler.py)
+
+- **问题：** 部分数据源来自 txt 文件而非 HTML，无法在软件中直接查看和输入，且汉字数据被 MATCH_DICT 验证拦截；Excel_Handler 连续空行阈值过小导致跳过数据
+- **修复：**
+  - 左侧面板新增 "HTML" / "图片" 两个切换按钮
+  - 图片模式使用 `mapping/mapping_pic.txt` 作为映射（与 `mapping_data.txt` 同格式：`excel行名：类别名`）
+  - "打开"按钮在图片模式读取并显示 `<类别>.txt` 文本内容
+  - 新增橙色 "📥 填入数据" 按钮，在图片模式下从 txt 自动解析并填入表格对应编号行
+  - `export_data()` 对图片模式类别跳过 MATCH_DICT 验证，允许汉字直接写入
+  - `read_first_column` 空行容忍阈值从 2 提高到 50，解决图片类别在 104-117 行被跳过的 bug
+  - `File_Reader._is_valid_file` 添加 `.html` 扩展名过滤，防止 `.txt` 文件混入 HTML 文件列表
+  - `sort()` 排除图片模式类别（`pic_categories`），仅统计 HTML 模式数据
+
+### 3. 版本号显示
+
+**文件：** [window/table_qt.py](window/table_qt.py)
+
+- **问题：** 无版本标识
+- **修复：** 在日志框下方添加灰色小字 `v2.0.5`
+
+---
+
 ## 2025-03-13
 
 ### 修复排序功能错误

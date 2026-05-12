@@ -39,3 +39,75 @@
 2026-05-12 17:52:37,492 - INFO - 开始排序
 2026-05-12 17:52:37,503 - INFO - 排序完成
 2026-05-12 17:52:37,744 - INFO - 写入完成
+2026-05-12 18:29:30,268 - INFO - 加载Excel文件: D:/My_app/test_excel/副本5-12.xlsx, 找到 1 个sheet
+2026-05-12 18:29:46,855 - INFO - 开始收集写入操作 *鸿运当头*
+2026-05-12 18:29:47,124 - INFO - ERROR: file_key '鸿运当头' 不在 excel_first_columns 中
+2026-05-12 18:29:47,126 - ERROR - 获取位置失败 - code: 001
+Traceback (most recent call last):
+  File "D:\My_app\window\table_qt.py", line 595, in export_data
+    line_location, column_location = self.get_info.get_location(
+TypeError: cannot unpack non-iterable NoneType object
+2026-05-12 18:33:29,242 - INFO - 加载Excel文件: D:/My_app/test_excel/副本5-12.xlsx, 找到 1 个sheet
+2026-05-12 18:34:01,190 - INFO - 开始收集写入操作 *鸿运当头：鸿运当头*
+2026-05-12 18:34:01,464 - INFO - ERROR: file_key '鸿运当头：鸿运当头' 不在 excel_first_columns 中
+2026-05-12 18:34:01,466 - ERROR - 获取位置失败 - code: 001
+Traceback (most recent call last):
+  File "D:\My_app\window\table_qt.py", line 595, in export_data
+    line_location, column_location = self.get_info.get_location(
+TypeError: cannot unpack non-iterable NoneType object
+2026-05-12 18:35:22,259 - INFO - 加载Excel文件: D:/My_app/test_excel/副本5-12.xlsx, 找到 1 个sheet
+2026-05-12 18:36:46,676 - INFO - 开始收集写入操作 *白色*
+2026-05-12 18:36:46,954 - INFO - ERROR: file_key '白色' 不在 excel_first_columns 中
+2026-05-12 18:36:46,956 - ERROR - 获取位置失败 - code: 001
+Traceback (most recent call last):
+  File "D:\My_app\window\table_qt.py", line 595, in export_data
+    line_location, column_location = self.get_info.get_location(
+TypeError: cannot unpack non-iterable NoneType object
+2026-05-12 18:59:09,799 - INFO - 加载Excel文件: D:/My_app/test_excel/副本5-12.xlsx, 找到 1 个sheet
+2026-05-12 18:59:33,454 - INFO - 已从 D:/My_app/test_excel/2026-05-12-jc\白色.txt 填入 8/8 条数据
+2026-05-12 19:00:02,215 - INFO - 加载Excel文件: D:/My_app/test_excel/副本5-12.xlsx, 找到 1 个sheet
+2026-05-12 19:00:09,752 - INFO - 已从 D:/My_app/test_excel/2026-05-12-jc\白色.txt 填入 8/8 条数据
+2026-05-12 19:00:12,641 - INFO - 开始收集写入操作 *白色*
+2026-05-12 19:00:12,642 - INFO - *白色* 共 8 条写入操作，开始后台写入
+2026-05-12 19:00:12,842 - INFO - 写入完成
+2026-05-12 19:00:47,057 - INFO - 已从 D:/My_app/test_excel/2026-05-12-jc\彩虹.txt 填入 8/8 条数据
+2026-05-12 19:00:50,445 - INFO - 开始收集写入操作 *彩虹*
+2026-05-12 19:00:50,446 - INFO - *彩虹* 共 8 条写入操作，开始后台写入
+2026-05-12 19:00:50,622 - INFO - 写入完成
+2026-05-12 19:06:10,046 - INFO - 加载Excel文件: D:/My_app/test_excel/副本5-12.xlsx, 找到 1 个sheet
+2026-05-12 19:06:24,068 - INFO - 开始收集写入操作 *八神竞猜*
+2026-05-12 19:06:26,355 - WARNING - *八神竞猜* 用户取消写入（验证未通过）
+2026-05-12 19:06:35,136 - INFO - 开始收集写入操作 *八神竞猜*
+2026-05-12 19:06:36,435 - WARNING - *八神竞猜* 用户取消写入（验证未通过）
+2026-05-12 19:06:39,611 - INFO - 已从 D:/My_app/test_excel/2026-05-12-jc\白色.txt 填入 8/8 条数据
+2026-05-12 19:06:41,246 - INFO - 开始收集写入操作 *白色*
+2026-05-12 19:06:41,247 - INFO - *白色* 共 8 条写入操作，开始后台写入
+2026-05-12 19:06:41,485 - INFO - 写入完成
+2026-05-12 19:06:42,661 - INFO - 开始排序
+2026-05-12 19:06:42,682 - INFO - 排序完成
+2026-05-12 19:06:42,856 - INFO - 写入完成
+2026-05-12 19:16:09,031 - INFO - 加载Excel文件: D:/My_app/test_excel/副本5-12.xlsx, 找到 1 个sheet
+2026-05-12 19:16:30,912 - INFO - 开始收集写入操作 *八神竞猜*
+2026-05-12 19:16:31,210 - INFO - *八神竞猜* 共 8 条写入操作，开始后台写入
+2026-05-12 19:16:31,351 - ERROR - 写入失败: [Errno 13] Permission denied: 'D:/My_app/test_excel/副本5-12.xlsx'
+2026-05-12 19:16:40,778 - INFO - 开始收集写入操作 *八神竞猜*
+2026-05-12 19:16:40,779 - INFO - *八神竞猜* 共 8 条写入操作，开始后台写入
+2026-05-12 19:16:40,980 - INFO - 写入完成
+2026-05-12 19:16:47,030 - INFO - 开始收集写入操作 *彩虹*
+2026-05-12 19:16:47,031 - INFO - *彩虹* 共 8 条写入操作，开始后台写入
+2026-05-12 19:16:47,205 - INFO - 写入完成
+2026-05-12 19:16:47,933 - INFO - 已从 D:/My_app/test_excel/2026-05-12-jc\彩虹.txt 填入 8/8 条数据
+2026-05-12 19:16:48,714 - INFO - 开始收集写入操作 *彩虹*
+2026-05-12 19:16:48,715 - INFO - *彩虹* 共 8 条写入操作，开始后台写入
+2026-05-12 19:16:48,963 - INFO - 写入完成
+2026-05-12 19:18:03,241 - INFO - 加载Excel文件: D:/My_app/test_excel/副本5-12.xlsx, 找到 1 个sheet
+2026-05-12 19:18:18,951 - INFO - 开始收集写入操作 *八神竞猜*
+2026-05-12 19:18:19,220 - INFO - *八神竞猜* 共 8 条写入操作，开始后台写入
+2026-05-12 19:18:19,398 - INFO - 写入完成
+2026-05-12 19:18:29,053 - INFO - 开始收集写入操作 *鸿运当头*
+2026-05-12 19:18:29,055 - INFO - *鸿运当头* 共 8 条写入操作，开始后台写入
+2026-05-12 19:18:29,236 - INFO - 写入完成
+2026-05-12 19:18:30,892 - INFO - JSON文件导出成功: ./json/2026-05-12.json
+2026-05-12 19:18:31,227 - INFO - 开始排序
+2026-05-12 19:18:31,239 - INFO - 排序完成
+2026-05-12 19:18:31,479 - INFO - 写入完成

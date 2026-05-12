@@ -2,9 +2,9 @@ import sys
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QScrollArea, QRadioButton, QTableWidget, QTableWidgetItem,
                              QHeaderView, QPushButton, QButtonGroup, QDialog, QLabel, QMessageBox,
-                             QTextEdit, QProgressDialog)
+                             QTextEdit, QProgressDialog, QStyledItemDelegate)
 from PyQt5.QtWebEngineWidgets import QWebEngineView  # 新增Web引擎组件
-from PyQt5.QtCore import Qt, QUrl, QThread
+from PyQt5.QtCore import Qt, QUrl, QThread, QEvent
 from PyQt5.QtGui import QTextCursor, QIcon
 from src.Excel_Info import GetWriteInfo
 from src.Excel_Writer import ExcelWriter
@@ -104,6 +104,31 @@ class NewWindow(QDialog):
 
 
 
+
+
+
+class SpaceToZeroDelegate(QStyledItemDelegate):
+    """编辑代理：编辑时按空格/反引号自动替换为0，同时作为数据级别的兜底"""
+    def createEditor(self, parent, option, index):
+        editor = super().createEditor(parent, option, index)
+        editor.installEventFilter(self)
+        return editor
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.KeyPress:
+            key = event.key()
+            if key == Qt.Key_Space or key == Qt.Key_QuoteLeft:
+                obj.insert("0")
+                return True
+        return super().eventFilter(obj, event)
+
+    def setModelData(self, editor, model, index):
+        """提交编辑前将空格/反引号替换为0"""
+        text = editor.text()
+        text = text.replace(" ", "0").replace("`", "0")
+        model.setData(index, text)
+
+
 class EnhancedDataEditor(QMainWindow):
     def __init__(self, top_data:list = None, 
                  left_items:list = None, 
@@ -139,6 +164,7 @@ class EnhancedDataEditor(QMainWindow):
             self.get_info = GetWriteInfo(file_path, excel_path, sheet_name)
             top_data = self.get_info.get_tabel_info()
             left_items, excel_name = self.get_info.get_file_and_excel_info()
+        self.file_path = file_path  # 存储文件夹路径，供图片模式查找txt文件
         # 初始化数据
         if left_items is None:
             self.left_items = ['八神竞猜', '财神密码', '红龙'] + [f"项目{i}" for i in range(4, 15)]
@@ -204,22 +230,47 @@ class EnhancedDataEditor(QMainWindow):
         self.current_window = None
         self.is_dirty = False          # 未保存修改标记
         self.worker_thread = None      # 后台工作线程引用
+        self.data_mode = 'html'        # 数据来源：'html' 或 'pic'
+        self._load_pic_config()        # 加载图片模式配置
         self.init_ui()
         
     def init_ui(self):
         main_widget = QWidget()
         main_layout = QHBoxLayout(main_widget)
         
+        # 左侧面板容器
+        left_panel = QVBoxLayout()
+
+        # HTML / 图片 模式切换按钮
+        mode_layout = QHBoxLayout()
+        active_style = """
+            QPushButton { background-color: #2196F3; color: white; font-weight: bold;
+            padding: 4px 10px; border-radius: 4px; border: 1px solid #1976D2; }
+        """
+        inactive_style = """
+            QPushButton { background-color: #ccc; color: #666; font-weight: bold;
+            padding: 4px 10px; border-radius: 4px; border: 1px solid #bbb; }
+        """
+        self.html_mode_btn = QPushButton("HTML")
+        self.pic_mode_btn = QPushButton("图片")
+        self.html_mode_btn.setStyleSheet(active_style)
+        self.pic_mode_btn.setStyleSheet(inactive_style)
+        self.html_mode_btn.clicked.connect(lambda: self._switch_data_mode('html'))
+        self.pic_mode_btn.clicked.connect(lambda: self._switch_data_mode('pic'))
+        mode_layout.addWidget(self.html_mode_btn)
+        mode_layout.addWidget(self.pic_mode_btn)
+        left_panel.addLayout(mode_layout)
+
         # 左侧滚动区域
-        left_scroll = QScrollArea()
-        left_scroll.setFixedWidth(150)
-        left_scroll.setWidgetResizable(True)
-        
+        self.left_scroll = QScrollArea()
+        self.left_scroll.setFixedWidth(150)
+        self.left_scroll.setWidgetResizable(True)
+
         self.radio_group = QButtonGroup()
         radio_container = QWidget()
         radio_layout = QVBoxLayout(radio_container)
         radio_layout.setAlignment(Qt.AlignTop)
-        
+
         # 创建单选按钮（自动分页）
         for idx, item in enumerate(self.left_items):
             radio = QRadioButton(item)
@@ -231,14 +282,16 @@ class EnhancedDataEditor(QMainWindow):
             radio_layout.addWidget(radio)
             if idx == 0:
                 radio.setChecked(True)
-        
-        left_scroll.setWidget(radio_container)
-        main_layout.addWidget(left_scroll)
+
+        self.left_scroll.setWidget(radio_container)
+        left_panel.addWidget(self.left_scroll)
+        main_layout.addLayout(left_panel)
         
         # 右侧表格区域
         right_layout = QVBoxLayout()
         
         self.table = QTableWidget()
+        self.table.setItemDelegate(SpaceToZeroDelegate(self.table))
         self.table.setColumnCount(6)
         self.table.setHorizontalHeaderLabels(['编号', '队伍', '比分1', '比分2', '比分3','比分4'])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
@@ -268,6 +321,25 @@ class EnhancedDataEditor(QMainWindow):
         """)
         reload_btn.clicked.connect(self.reload_paths)
         top_btn_layout.addWidget(reload_btn)
+
+        # 图片模式：txt自动填入按钮（默认隐藏）
+        self.fill_btn = QPushButton("📥 填入数据")
+        self.fill_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #FF9800;
+                color: white;
+                font-weight: bold;
+                padding: 8px 16px;
+                border-radius: 6px;
+                border: 2px solid #F57C00;
+            }
+            QPushButton:hover { background-color: #F57C00; }
+            QPushButton:pressed { background-color: #E65100; }
+        """)
+        self.fill_btn.clicked.connect(self._on_fill_from_txt)
+        self.fill_btn.setVisible(False)  # 初始隐藏
+        top_btn_layout.addWidget(self.fill_btn)
+
         top_btn_layout.addStretch()  # 将按钮推到左侧
         
         # 主功能按钮行
@@ -351,9 +423,15 @@ class EnhancedDataEditor(QMainWindow):
         """)
         right_layout.addWidget(self.log_output)  # 添加到右侧布局
 
+        # 版本号标签（不起眼的右下角）
+        version_label = QLabel("v2.0.5")
+        version_label.setStyleSheet("color: #999; font-size: 10px; padding: 2px;")
+        version_label.setAlignment(Qt.AlignRight | Qt.AlignBottom)
+        right_layout.addWidget(version_label)
+
         # 设置日志记录器
         self.logger = setup_logger(self.log_output)
-        
+
         # 重定向 print 到日志框
         sys.stdout = self  # 自定义 stdout
         
@@ -361,7 +439,130 @@ class EnhancedDataEditor(QMainWindow):
         """捕获 print 输出并重定向到日志"""
         if text.strip():  # 只记录非空文本
             self.logger.info(text.strip())
-        
+
+    def _load_pic_config(self):
+        """加载图片模式配置（与 mapping_data.txt 同格式：excel值：类别名）"""
+        self.pic_categories = []
+        self.pic_mapping = {}
+        try:
+            pic_file = "mapping/mapping_pic.txt"
+            if os.path.exists(pic_file):
+                with open(pic_file, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and "：" in line:
+                            value, key = line.split("：", 1)
+                            self.pic_mapping[key.strip()] = value.strip()
+                            self.pic_categories.append(key.strip())
+                # 将图片类别追加到 data_storage
+                for pic_cat in self.pic_categories:
+                    if pic_cat not in self.data_storage:
+                        self.data_storage[pic_cat] = {row[0]: list(row[2:]) for row in self.top_data}
+        except Exception:
+            pass
+
+    def _rebuild_radio_buttons(self):
+        """根据当前 data_mode 重建左侧单选按钮列表"""
+        # 清空按钮组
+        for btn in self.radio_group.buttons():
+            self.radio_group.removeButton(btn)
+        # 清空布局
+        container = self.left_scroll.widget()
+        if container:
+            layout = container.layout()
+            while layout.count():
+                child = layout.takeAt(0)
+                if child.widget():
+                    child.widget().deleteLater()
+
+        # 选择对应的列表
+        items = self.left_items if self.data_mode == 'html' else self.pic_categories
+        mapping = self.mapping if self.data_mode == 'html' else self.pic_mapping
+
+        for idx, item in enumerate(items):
+            radio = QRadioButton(item)
+            if item in mapping:
+                radio.setStyleSheet("color: green;")
+            else:
+                radio.setStyleSheet("color: red;")
+            self.radio_group.addButton(radio, idx)
+            container.layout().addWidget(radio)
+            if idx == 0:
+                radio.setChecked(True)
+
+    def _switch_data_mode(self, mode):
+        """切换数据来源模式"""
+        if self.data_mode == mode:
+            return
+        self.data_mode = mode
+        # 更新按钮样式
+        active = """
+            QPushButton { background-color: #2196F3; color: white; font-weight: bold;
+            padding: 4px 10px; border-radius: 4px; border: 1px solid #1976D2; }
+        """
+        inactive = """
+            QPushButton { background-color: #ccc; color: #666; font-weight: bold;
+            padding: 4px 10px; border-radius: 4px; border: 1px solid #bbb; }
+        """
+        self.html_mode_btn.setStyleSheet(active if mode == 'html' else inactive)
+        self.pic_mode_btn.setStyleSheet(active if mode == 'pic' else inactive)
+        # 重建单选按钮
+        self._rebuild_radio_buttons()
+        # 显示/隐藏填入按钮
+        self.fill_btn.setVisible(mode == 'pic')
+        # 刷新表格
+        self.refresh_table()
+
+    def _on_fill_from_txt(self):
+        """图片模式：从txt文件自动解析并填入数据到表格"""
+        selected_item = self.radio_group.checkedButton().text()
+        if not self.file_path:
+            QMessageBox.warning(self, "警告", "未设置文件夹路径")
+            return
+
+        txt_path = os.path.join(self.file_path, f"{selected_item}.txt")
+        if not os.path.exists(txt_path):
+            QMessageBox.warning(self, "警告", f"未找到文件: {txt_path}")
+            return
+
+        try:
+            with open(txt_path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+
+            txt_data = {}
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                parts = line.split()
+                if len(parts) >= 1:
+                    code = parts[0]
+                    values = [v.replace(" ", "0").replace("`", "0") for v in parts[1:5]]
+                    while len(values) < 4:
+                        values.append('')
+                    txt_data[code] = values
+
+            filled = 0
+            for row in range(self.table.rowCount()):
+                code_item = self.table.item(row, 0)
+                if code_item is None:
+                    continue
+                code = code_item.text()
+                if code in txt_data:
+                    for col_idx, val in enumerate(txt_data[code], start=2):
+                        if col_idx < self.table.columnCount():
+                            self.table.setItem(row, col_idx, QTableWidgetItem(val))
+                    filled += 1
+
+            if filled > 0:
+                self.is_dirty = True
+                self.logger.info(f"已从 {txt_path} 填入 {filled}/{len(txt_data)} 条数据")
+                self.log_output.append(f"已从 {os.path.basename(txt_path)} 填入 {filled} 条数据")
+            else:
+                QMessageBox.warning(self, "提示", "未找到匹配的编号")
+        except Exception as e:
+            QMessageBox.warning(self, "警告", f"读取失败: {str(e)}")
+
     def refresh_table(self):
         """
         刷新表格
@@ -397,7 +598,7 @@ class EnhancedDataEditor(QMainWindow):
             selected_item = self.radio_group.checkedButton().text()
             for row in range(self.table.rowCount()):
                 code = self.table.item(row, 0).text()
-                new_values = [self.table.item(row, col).text() for col in range(2, 6)]
+                new_values = [self.table.item(row, col).text().replace(" ", "0").replace("`", "0") for col in range(2, 6)]
                 self.data_storage[selected_item][code] = new_values
             self.is_dirty = True
         except Exception as e:
@@ -406,21 +607,48 @@ class EnhancedDataEditor(QMainWindow):
 
     def on_open_clicked(self):
         """
-        打开HTML文件
+        打开文件：HTML模式打开HTML，图片模式打开txt
         """
         if self.current_window:
             self.current_window.close()
         selected_item = self.radio_group.checkedButton().text()
-        try:
-            url = self.url[selected_item]       
-            self.current_window = NewWindow(selected_item, 
-                                          html_base_path=url,
-                                          parent=self)
 
-            self.current_window.destroyed.connect(lambda: setattr(self, 'current_window', None))
-            self.current_window.show()
-        except:
-            QMessageBox.warning(self, "警告", "文件路径不存在，或者文件名称错误")
+        if self.data_mode == 'pic':
+            # 图片模式：尝试打开对应的txt文件
+            txt_path = None
+            if self.file_path:
+                txt_path = os.path.join(self.file_path, f"{selected_item}.txt")
+            if not txt_path or not os.path.exists(txt_path):
+                QMessageBox.warning(self, "警告", f"未找到对应的txt文件: {txt_path}")
+                return
+            try:
+                with open(txt_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                dialog = QDialog(self)
+                dialog.setWindowTitle(f"图片数据 - {selected_item}")
+                dialog.setGeometry(200, 200, 600, 400)
+                layout = QVBoxLayout()
+                text_edit = QTextEdit()
+                text_edit.setReadOnly(True)
+                text_edit.setPlainText(content)
+                layout.addWidget(text_edit)
+                dialog.setLayout(layout)
+                self.current_window = dialog
+                self.current_window.destroyed.connect(lambda: setattr(self, 'current_window', None))
+                self.current_window.show()
+            except Exception:
+                QMessageBox.warning(self, "警告", "读取txt文件失败")
+        else:
+            # HTML模式：原有逻辑
+            try:
+                url = self.url[selected_item]
+                self.current_window = NewWindow(selected_item,
+                                              html_base_path=url,
+                                              parent=self)
+                self.current_window.destroyed.connect(lambda: setattr(self, 'current_window', None))
+                self.current_window.show()
+            except:
+                QMessageBox.warning(self, "警告", "文件路径不存在，或者文件名称错误")
 
             
     def export_data(self):
@@ -429,9 +657,10 @@ class EnhancedDataEditor(QMainWindow):
         """
         self.save_changes()
         selected_item = self.radio_group.checkedButton().text()
+        is_pic = (self.data_mode == 'pic' and selected_item in self.pic_categories)
 
         try:
-            ex_header = self.mapping[selected_item]
+            ex_header = self.pic_mapping[selected_item] if is_pic else self.mapping[selected_item]
         except Exception as e:
             logger.exception(f"映射表错误: 未找到键 '{selected_item}'")
             QMessageBox.warning(self, "错误", f"'{selected_item}'未匹配成功，请检查映射表")
@@ -455,13 +684,21 @@ class EnhancedDataEditor(QMainWindow):
                 # 验证每个分值，保持列位置不变
                 validated_vals = []
                 for val in values:
-                    result = ExcelWriter.validate_value(val)
-                    if result['valid']:
-                        validated_vals.append(result['converted'])
+                    if is_pic:
+                        # 图片模式：只拒绝空值，允许汉字直接通过
+                        if val is None or str(val).strip() == "":
+                            validated_vals.append('')
+                        else:
+                            validated_vals.append(str(val).strip())
                     else:
-                        validated_vals.append('')  # 占位，保持列偏移正确
-                        if val is not None and str(val).strip() != "":
-                            invalid_items.append(f"code={code}, 值='{val}': {result['message']}")
+                        # HTML模式：标准验证
+                        result = ExcelWriter.validate_value(val)
+                        if result['valid']:
+                            validated_vals.append(result['converted'])
+                        else:
+                            validated_vals.append('')  # 占位，保持列偏移正确
+                            if val is not None and str(val).strip() != "":
+                                invalid_items.append(f"code={code}, 值='{val}': {result['message']}")
 
                 write_ops.append((line_location, column_location, validated_vals))
 
@@ -555,6 +792,8 @@ class EnhancedDataEditor(QMainWindow):
             logger.info("开始排序")
 
             for name in self.data_storage:
+                if name in self.pic_categories:
+                    continue  # 图片模式数据不参与排序统计
                 number_dict = self.data_storage[name]
                 for number, values in number_dict.items():
                     for value in values:

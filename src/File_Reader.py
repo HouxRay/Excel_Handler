@@ -56,8 +56,8 @@ class FileReader:
     
 
     def _is_valid_file(self, path: Path) -> bool:
-        """验证是否为有效文件（过滤目录）"""
-        return path.is_file()
+        """验证是否为有效文件（过滤目录和非HTML文件）"""
+        return path.is_file() and path.suffix.lower() == '.html'
     
     @staticmethod
     def extract_filename(file_path: Union[str, Path]) -> str:
