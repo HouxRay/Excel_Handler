@@ -62,3 +62,51 @@
   - `setup_logger()` 中检查 `logger.handlers` 防止处理器重复添加
   - 设置 `logger.propagate = False` 禁止日志向父记录器传播
   - GUI 日志处理器添加前检查是否已存在相同实例
+
+---
+
+## 2026-05-12 — 多线程改造与多项优化
+
+### 1. 写入/排序多线程化（不阻塞UI）
+
+**文件：** [src/Excel_Writer.py](src/Excel_Writer.py)、[src/worker.py](src/worker.py)（新建）、[window/table_qt.py](window/table_qt.py)
+
+- **问题：** 导出和排序操作在主线程执行 Excel 写入，`workbook.save()` 每次调用都序列化整个工作簿，导致界面卡顿
+- **方案：** 采用二阶段架构：
+  1. **主线程阶段：** 收集所有写入操作，获取行列坐标，不执行实际 I/O
+  2. **后台线程阶段：** 通过 `ExcelWriteWorker(QObject)` 在工作线程执行写入，最后统一 `save()`
+- **新增 [src/worker.py](src/worker.py)：** `ExcelWriteWorker` 类，通过 `pyqtSignal` 与主线程通信（`finished`、`progress`）
+- **新增方法：**
+  - `ExcelWriter.batch_write_cell()` — 静默单格写入
+  - `ExcelWriter.batch_write_list()` — 静默横向批量写入
+  - `ExcelWriter.batch_write_dict()` — 静默纵向批量写入
+  - `ExcelWriter.save()` — 显式保存
+  - `ExcelWriter.validate_value()` — 纯验证方法（无UI），可在主线程预先验证
+- **新增 `_run_write_worker()` 机制：** 防止重复启动工作线程，显示 `QProgressDialog` 进度条
+
+### 2. 绿色按钮误触确认
+
+**文件：** [window/table_qt.py](window/table_qt.py) — `reload_paths()` 方法
+
+- **问题：** "重新选择路径"绿色按钮点击后直接关闭主窗口，丢弃所有未保存修改，无确认提示，且容易误触
+- **修复：**
+  - 添加 `QMessageBox.question` 确认对话框，默认选"否"
+  - 添加 `is_dirty` 标记追踪未保存修改，对话框中提示"有未保存的修改"
+  - `save_changes()` 和导出成功后自动更新 dirty 标记
+
+### 3. 重新选择路径时关闭HTML窗口
+
+**文件：** [window/table_qt.py](window/table_qt.py) — `reload_paths()` 方法
+
+- **问题：** 点击重新选择路径后，HTML 预览窗口未被关闭，成为孤儿窗口
+- **修复：** 在 `self.close()` 之前检查并关闭 `self.current_window`
+
+### 4. JSON 格式改进（跨sheet数据复用）
+
+**文件：** [window/table_qt.py](window/table_qt.py) — `export_json()` 和 JSON 导入逻辑
+
+- **问题：** 旧 JSON 格式 `{category: {code: [scores]}}` 强依赖 category 名称（HTML 文件名），切换 sheet 后无法匹配
+- **修复：**
+  - **新导出格式：** `{code: {category: [scores]}}`（按比赛编号组织）
+  - **导入兼容：** 自动检测新旧格式，新格式按 code 匹配导入，旧格式使用原有 `update()` 逻辑
+  - 导入时只匹配当前 `data_storage` 中存在的 category+code 组合，不引入无关数据

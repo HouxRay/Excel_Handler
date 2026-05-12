@@ -47,6 +47,23 @@ class ExcelWriter:
         if self.app is None:
             self.app = QApplication(sys.argv)
 
+    @staticmethod
+    def validate_value(item: str) -> dict:
+        """
+        纯验证方法，无UI弹窗。可在主线程预先验证。
+        返回: {'valid': bool, 'message': str, 'converted': str}
+        """
+        if not item or str(item).strip() == "":
+            return {'valid': False, 'message': '数据不能为空', 'converted': ''}
+        item_str = str(item).strip()
+        if item_str.isdigit():
+            if len(item_str) != 2:
+                return {'valid': False, 'message': f'数字必须为2位，当前为{len(item_str)}位: "{item_str}"', 'converted': item_str}
+            return {'valid': True, 'message': '验证通过', 'converted': item_str}
+        if item_str.lower() in MATCH_DICT:
+            return {'valid': True, 'message': '验证通过', 'converted': MATCH_DICT[item_str.lower()]}
+        return {'valid': False, 'message': f'字符不在允许列表中: "{item_str}"', 'converted': item_str}
+
     def _validate_item(self, item: str) -> dict:
         """
         验证数据项是否符合要求
@@ -76,8 +93,40 @@ class ExcelWriter:
         else:
             return {'valid': False, 'message': f'字符不在允许列表中: "{item_str}"，允许的字符: {list(match_dict.keys())}'}
 
-    def write_info(self, line_location: int, 
-                   column_location: int, 
+    def batch_write_cell(self, line_location: int, column_location: int, value) -> None:
+        """静默写入单个单元格，无验证、无弹窗、不保存"""
+        match_dict = MATCH_DICT
+        item = str(value).strip() if value is not None else ""
+        if item.lower() in match_dict:
+            item = match_dict[item.lower()]
+        self.ws.cell(row=line_location, column=column_location).value = item
+
+    def batch_write_list(self, line_location: int, column_location: int, values: list) -> None:
+        """静默写入列表（横向连续），无验证、无弹窗、不保存"""
+        match_dict = MATCH_DICT
+        for idx, item in enumerate(values):
+            if item is None or item == "":
+                continue
+            item_str = str(item).strip()
+            if item_str.lower() in match_dict:
+                item_str = match_dict[item_str.lower()]
+            self.ws.cell(row=line_location, column=column_location + idx).value = item_str
+
+    def batch_write_dict(self, line_location: int, column_location: int, value: dict) -> None:
+        """静默写入字典（纵向连续），无验证、无弹窗、不保存"""
+        current_line = line_location
+        for idx, (key, val) in enumerate(value.items()):
+            if val is None or val == "":
+                continue
+            self.ws.cell(row=current_line + idx, column=column_location).value = key
+            self.ws.cell(row=current_line + idx, column=column_location + 1).value = val
+
+    def save(self):
+        """显式保存工作簿"""
+        self.workbook.save(self.excel_path)
+
+    def write_info(self, line_location: int,
+                   column_location: int,
                    value: Union[int, str, list, dict], # dict is testing
                    cheak_empty: bool = False) -> None:
         """

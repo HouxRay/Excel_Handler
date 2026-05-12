@@ -1,9 +1,10 @@
 import sys
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QScrollArea, QRadioButton, QTableWidget, QTableWidgetItem,
-                             QHeaderView, QPushButton, QButtonGroup, QDialog, QLabel, QMessageBox, QTextEdit, )
+                             QHeaderView, QPushButton, QButtonGroup, QDialog, QLabel, QMessageBox,
+                             QTextEdit, QProgressDialog)
 from PyQt5.QtWebEngineWidgets import QWebEngineView  # 新增Web引擎组件
-from PyQt5.QtCore import Qt, QUrl
+from PyQt5.QtCore import Qt, QUrl, QThread
 from PyQt5.QtGui import QTextCursor, QIcon
 from src.Excel_Info import GetWriteInfo
 from src.Excel_Writer import ExcelWriter
@@ -167,6 +168,7 @@ class EnhancedDataEditor(QMainWindow):
             self.mapping = self.get_info.get_mapping()
             self.header_bases = self.get_info.get_header_bases()
             self.url = self.get_info.get_file_dict()
+            self.sheet_name = sheet_name  # 存储sheet名，供后台线程使用
         
         # 初始化数据存储，并允许通过update引入新数据
         self.data_storage = {item: {row[0]: list(row[2:]) for row in self.top_data} 
@@ -176,14 +178,32 @@ class EnhancedDataEditor(QMainWindow):
         if json_path:
             try:
                 json_data = self.get_info.get_json(json_path)
-                if json_data:
-                    self.data_storage.update(json_data)
-                    logger.info("成功从JSON文件加载额外数据")
+                if json_data and isinstance(json_data, dict):
+                    # 检测格式：新格式顶层为code，旧格式顶层为category
+                    first_key = next(iter(json_data))
+                    first_val = json_data[first_key]
+                    if isinstance(first_val, dict) and any(
+                        isinstance(v, list) for v in first_val.values()
+                    ):
+                        # 新格式：{code: {category: [scores]}}
+                        imported_count = 0
+                        for code, categories in json_data.items():
+                            for category, scores in categories.items():
+                                if category in self.data_storage and code in self.data_storage[category]:
+                                    self.data_storage[category][code] = scores
+                                    imported_count += 1
+                        logger.info(f"成功从JSON文件加载数据: {imported_count} 项")
+                    else:
+                        # 旧格式：{category: {code: [scores]}}
+                        self.data_storage.update(json_data)
+                        logger.info("成功从JSON文件加载额外数据（旧格式）")
             except Exception as e:
                 logger.exception("加载JSON数据时发生错误")
                 QMessageBox.warning(self, "警告", f"加载JSON数据失败：{str(e)}")
         
         self.current_window = None
+        self.is_dirty = False          # 未保存修改标记
+        self.worker_thread = None      # 后台工作线程引用
         self.init_ui()
         
     def init_ui(self):
@@ -379,6 +399,7 @@ class EnhancedDataEditor(QMainWindow):
                 code = self.table.item(row, 0).text()
                 new_values = [self.table.item(row, col).text() for col in range(2, 6)]
                 self.data_storage[selected_item][code] = new_values
+            self.is_dirty = True
         except Exception as e:
             logger.exception("保存数据时发生错误")
             QMessageBox.warning(self, "警告", f"保存失败：{str(e)}")
@@ -404,56 +425,130 @@ class EnhancedDataEditor(QMainWindow):
             
     def export_data(self):
         """
-        导出数据
-        """       
+        导出数据 - 主线程收集验证，后台线程写入（不阻塞UI）
+        """
         self.save_changes()
         selected_item = self.radio_group.checkedButton().text()
-        export_list = {
-            'category': selected_item,
-            'data': [{
-                code: {
-                    'fixed': self.fixed_values[code],
-                    'fields': values
-                }
-            } for code, values in self.data_storage[selected_item].items()]
-        }
 
-        # 写入Excel
-        header = export_list['category']
-        info_dicts = export_list['data']
         try:
-            ex_header = self.mapping[header]
+            ex_header = self.mapping[selected_item]
         except Exception as e:
-            logger.exception(f"映射表错误: 未找到键 '{header}'")
-            QMessageBox.warning(self, "错误", f"'{header}'未匹配成功，请检查映射表")
+            logger.exception(f"映射表错误: 未找到键 '{selected_item}'")
+            QMessageBox.warning(self, "错误", f"'{selected_item}'未匹配成功，请检查映射表")
             return 0
 
-        logger.info(f'开始写入 *{header}*')
-        
-        for info_dict in info_dicts:
-            key = list(info_dict.keys())[0]
-            value = info_dict[key]
-            pre_scores = value['fields']
-            try:     
-                # 修复参数顺序：文件名用于查找行，表头数字用于计算列
-                line_location, column_location = self.get_info.get_location(key, ex_header, self.excel_first_columns)
-                if line_location is None or column_location is None:
-                    logger.error(f"get_location 返回 None for key={key}, ex_header={ex_header}")
-                    continue
-                is_written = self.writer.write_info(line_location, column_location, value=pre_scores)
-                if is_written == 0:
-                    logger.warning(f'*{header}* 写入失败')
-                    return 0
-            except Exception as e:
-                logger.exception(f"*{header}* 写入失败 - 键: {key}")
-                return 0
-        logger.info(f'*{header}* 写入完成')   
+        logger.info(f'开始收集写入操作 *{selected_item}*')
 
-        return export_list
+        # 第一阶段：收集写操作并逐项验证（主线程，可弹窗）
+        write_ops = []
+        invalid_items = []
+
+        for code, values in self.data_storage[selected_item].items():
+            try:
+                line_location, column_location = self.get_info.get_location(
+                    code, ex_header, self.excel_first_columns
+                )
+                if line_location is None or column_location is None:
+                    logger.error(f"get_location 返回 None for code={code}, ex_header={ex_header}")
+                    continue
+
+                # 验证每个分值，保持列位置不变
+                validated_vals = []
+                for val in values:
+                    result = ExcelWriter.validate_value(val)
+                    if result['valid']:
+                        validated_vals.append(result['converted'])
+                    else:
+                        validated_vals.append('')  # 占位，保持列偏移正确
+                        if val is not None and str(val).strip() != "":
+                            invalid_items.append(f"code={code}, 值='{val}': {result['message']}")
+
+                write_ops.append((line_location, column_location, validated_vals))
+
+            except Exception as e:
+                logger.exception(f"获取位置失败 - code: {code}")
+                return 0
+
+        # 发现无效数据时弹窗确认
+        if invalid_items:
+            detail = "\n".join(invalid_items[:20])
+            if len(invalid_items) > 20:
+                detail += f"\n... 还有 {len(invalid_items) - 20} 条"
+            message = f"以下数据验证未通过:\n{detail}\n\n是否跳过无效项并继续写入？"
+            reply = QMessageBox.question(self, '验证失败', message,
+                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if reply == QMessageBox.No:
+                logger.warning(f'*{selected_item}* 用户取消写入（验证未通过）')
+                return 0
+
+        if not write_ops:
+            logger.warning(f'*{selected_item}* 无有效写入操作')
+            return 0
+
+        logger.info(f'*{selected_item}* 共 {len(write_ops)} 条写入操作，开始后台写入')
+
+        # 第二阶段：后台线程写入
+        self._run_write_worker(write_ops, f"导出 {selected_item}")
+
+    def _run_write_worker(self, write_ops, task_name):
+        """启动后台写入线程，不阻塞UI"""
+        # 防止重复启动
+        if self.worker_thread and self.worker_thread.isRunning():
+            QMessageBox.warning(self, "提示", "已有写入任务正在进行，请等待完成")
+            return
+
+        from src.worker import ExcelWriteWorker
+
+        self.worker_thread = QThread()
+        self.worker = ExcelWriteWorker(
+            self.writer.excel_path,
+            getattr(self, 'sheet_name', None),
+            write_ops
+        )
+        self.worker.moveToThread(self.worker_thread)
+
+        # 连接信号
+        self.worker_thread.started.connect(self.worker.run)
+        self.worker.finished.connect(self.worker_thread.quit)
+        self.worker.finished.connect(self._on_write_finished)
+        self.worker.progress.connect(self._on_write_progress)
+        self.worker_thread.finished.connect(self.worker.deleteLater)
+        self.worker_thread.finished.connect(lambda: setattr(self, 'worker_thread', None))
+
+        self.worker_thread.start()
+
+        # 进度对话框
+        self.progress_dialog = QProgressDialog(
+            f"正在{task_name}...", None, 0, len(write_ops), self
+        )
+        self.progress_dialog.setWindowTitle("请稍候")
+        self.progress_dialog.setCancelButton(None)
+        self.progress_dialog.setMinimumDuration(0)
+        self.progress_dialog.show()
+
+    def _on_write_progress(self, current, total):
+        """写入进度更新（主线程）"""
+        if hasattr(self, 'progress_dialog') and self.progress_dialog:
+            self.progress_dialog.setValue(current)
+            self.progress_dialog.setLabelText(f"正在写入... ({current}/{total})")
+
+    def _on_write_finished(self, success, message):
+        """写入完成回调（主线程）"""
+        if hasattr(self, 'progress_dialog') and self.progress_dialog:
+            self.progress_dialog.close()
+            self.progress_dialog = None
+
+        if success:
+            self.is_dirty = False
+            logger.info(message)
+            self.log_output.append(f"✅ {message}")
+        else:
+            logger.error(message)
+            QMessageBox.critical(self, "错误", message)
     
     def sort(self):
         """
-        排序
+        排序 - 内存统计在主线程，写入在后台线程
         """
         try:
             stats = defaultdict(Counter)
@@ -467,14 +562,19 @@ class EnhancedDataEditor(QMainWindow):
                             stats[number][value] += 1
 
             dict_counter = {number: dict(counts.most_common()) for number, counts in stats.items()}
-            
+
+            # 收集写入操作（主线程）
+            write_ops = []
             for column, contents in dict_counter.items():
                 try:
-                    _, column_location = self.get_info.get_location(header_num=column) 
-                    self.writer.write_info(84, column_location, contents)
+                    _, column_location = self.get_info.get_location(header_num=column)
+                    write_ops.append((84, column_location, contents))
                 except Exception as e:
                     logger.exception(f"排序写入失败 - 列: {column}")
-                    
+
+            if write_ops:
+                self._run_write_worker(write_ops, "排序")
+
             logger.info("排序完成")
             return dict_counter
         except Exception as e:
@@ -484,16 +584,27 @@ class EnhancedDataEditor(QMainWindow):
 
     def export_json(self):
         """
-        导出JSON文件
+        导出JSON文件 - 按比赛编号组织，便于跨sheet复用
+        格式: {code: {category: [scores]}}
         """
         try:
             import json
             if not os.path.exists("./json"):
                 os.makedirs("./json")
+
+            # 转置为 code→category→scores 格式
+            new_json_data = {}
+            for category, codes in self.data_storage.items():
+                for code, scores in codes.items():
+                    if code not in new_json_data:
+                        new_json_data[code] = {}
+                    new_json_data[code][category] = scores
+
             json_path = f"./json/{datetime.now().strftime('%Y-%m-%d')}.json"
             with open(json_path, 'w', encoding='utf-8') as f:
-                json.dump(self.data_storage, f, ensure_ascii=False, indent=4)
+                json.dump(new_json_data, f, ensure_ascii=False, indent=4)
             logger.info(f"JSON文件导出成功: {json_path}")
+            self.is_dirty = False
         except Exception as e:
             logger.exception("JSON导出失败")
             QMessageBox.critical(self, "错误", f"JSON导出失败：{str(e)}")
@@ -504,9 +615,25 @@ class EnhancedDataEditor(QMainWindow):
         重新选择路径并重新加载数据
         """
         try:
+            # 先关闭打开的HTML窗口
+            if self.current_window:
+                self.current_window.close()
+                self.current_window = None
+
+            # 确认对话框
+            dirty_msg = "，且有未保存的修改" if self.is_dirty else ""
+            reply = QMessageBox.question(
+                self, '确认重新选择',
+                f'重新选择路径将关闭当前窗口{dirty_msg}，未保存的数据将会丢失。\n是否继续？',
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if reply != QMessageBox.Yes:
+                return
+
             # 关闭当前窗口
             self.close()
-            
+
             # 重新运行路径选择器
             from window.table_qt_2 import PathSelector
             path_selector = PathSelector()
