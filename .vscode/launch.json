@@ -1,0 +1,75 @@
+{
+    // 使用 IntelliSense 了解相关属性。 
+    // 悬停以查看现有属性的描述。
+    // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+
+        
+        {
+            "name": "Excel_info",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "src.Excel_Info",
+            "console": "integratedTerminal"
+        },
+
+        {
+            "name": "table_conbine",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "Tk_table.table_conbine",
+            "console": "integratedTerminal"
+        },
+
+
+        {
+            "name": "qt_table",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "window.table_qt",
+            "console": "integratedTerminal"
+        },
+
+        {
+            "name": "qt_table_test",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "window.table_qt_test",
+            "console": "integratedTerminal"
+        },
+
+        {
+            "name": "html_table",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "Tk_table.table_html",
+            "console": "integratedTerminal"
+        },
+
+        {
+            "name": "html2_table",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "Tk_table.table_html_2",
+            "console": "integratedTerminal"
+        },
+
+        {
+            "name": "main_qt",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "main",
+            "console": "integratedTerminal"
+        },
+
+        {
+            "name": "name_matcher",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "src.Name_Matcher",
+            "console": "integratedTerminal"
+        }
+
+    ]
+}
