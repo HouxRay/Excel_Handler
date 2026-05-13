@@ -7,11 +7,13 @@ from pathlib import Path
 
 
 class GetWriteInfo:
-    def __init__(self, file_path: Union[str, Path], excel_path: Union[str, Path], sheet_name: str = None):
+    def __init__(self, file_path: Union[str, Path], excel_path: Union[str, Path],
+                 sheet_name: str = None, mapping_path: str = "mapping/mapping_data.txt"):
         """
         file_path: html文件路径
         excel_path: excel文件路径
         sheet_name: Excel sheet名称，如果为None则使用活动sheet
+        mapping_path: 映射文件路径，默认 mapping/mapping_data.txt
         """
 
         self.file_path = file_path
@@ -22,7 +24,7 @@ class GetWriteInfo:
         self.name_matcher = NameMatcher(file_path=file_path, excel_path=excel_path)
         self.file_path = Path(file_path)
         self.wb = load_workbook(filename=self.excel_path)
-        
+
         # 使用指定的sheet或活动sheet
         if sheet_name and sheet_name in self.wb.sheetnames:
             self.ws = self.wb[sheet_name]
@@ -31,7 +33,7 @@ class GetWriteInfo:
             if sheet_name:
                 print(f"警告: sheet '{sheet_name}' 不存在，使用活动sheet: {self.ws.title}")
         self.pre_mapping = {}
-        with open("mapping/mapping_data.txt", "r", encoding="utf-8") as f:
+        with open(mapping_path, "r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()  # 去除首尾空格和换行
                 if line and "：" in line:

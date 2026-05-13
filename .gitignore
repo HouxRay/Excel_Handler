@@ -1,0 +1,20 @@
+# Build artifacts
+build/
+dist/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Config (user-specific)
+config.ini
+
+# Logs
+logs/
+
+# Test data
+test_excel/
+
+# Spec file is tracked (needed for PyInstaller)
+# main.spec

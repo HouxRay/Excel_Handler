@@ -16,11 +16,21 @@ def run():
         return  # 用户取消选择
     
     folder_path, excel_path, json_path, sheet_name = path_selector.selected_paths
-    
+
     # 验证路径有效性
     if not folder_path or not excel_path:
         QMessageBox.critical(None, "错误", "必须选择有效的文件夹和Excel文件路径")
         return
+
+    # 保存路径到 QSettings 配置
+    from PyQt5.QtCore import QSettings
+    settings = QSettings("config.ini", QSettings.IniFormat)
+    if not settings.value("paths/mapping_path"):
+        settings.setValue("paths/mapping_path", "mapping/mapping_data.txt")
+    settings.setValue("paths/html_folder_path", folder_path)
+    settings.setValue("paths/excel_path", excel_path)
+    settings.setValue("paths/json_path", json_path)
+    settings.setValue("paths/sheet_name", sheet_name)
     
     try:
         # 第二步：获取表格信息

@@ -1,8 +1,9 @@
 import sys
-from PyQt5.QtWidgets import (QApplication, QWidget, QPushButton, 
-                             QLineEdit, QLabel, QFileDialog, QHBoxLayout, 
+from PyQt5.QtWidgets import (QApplication, QWidget, QPushButton,
+                             QLineEdit, QLabel, QFileDialog, QHBoxLayout,
                              QVBoxLayout, QMessageBox, QDialog, QComboBox)
 from PyQt5.QtGui import QTextCursor, QIcon
+from PyQt5.QtCore import QSettings
 import os, logging
 from datetime import datetime
 from openpyxl import load_workbook
@@ -121,6 +122,7 @@ class PathSelector(QDialog):
         main_layout.addWidget(self.confirm_btn)
 
         self.setLayout(main_layout)
+        self._load_from_settings()
 
     def select_folder(self):
         folder = QFileDialog.getExistingDirectory(self, '选择文件夹')
@@ -180,6 +182,20 @@ class PathSelector(QDialog):
             
         self.selected_paths = (folder_path, file_path, json_path, selected_sheet)
         self.accept()  # 使用accept()关闭对话框
+
+    def _load_from_settings(self):
+        """从 config.ini 预填路径字段"""
+        settings = QSettings("config.ini", QSettings.IniFormat)
+        folder = settings.value("paths/html_folder_path", "")
+        excel = settings.value("paths/excel_path", "")
+        json_p = settings.value("paths/json_path", "")
+        if folder and os.path.exists(folder):
+            self.folder_line.setText(folder)
+        if excel and os.path.exists(excel):
+            self.file_line.setText(excel)
+            self.load_sheet_names(excel)
+        if json_p and os.path.exists(json_p):
+            self.json_line.setText(json_p)
 
     def run(self):
         app = QApplication(sys.argv)

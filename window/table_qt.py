@@ -2,18 +2,19 @@ import sys
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QScrollArea, QRadioButton, QTableWidget, QTableWidgetItem,
                              QHeaderView, QPushButton, QButtonGroup, QDialog, QLabel, QMessageBox,
-                             QTextEdit, QProgressDialog, QStyledItemDelegate)
+                             QTextEdit, QProgressDialog, QStyledItemDelegate, QComboBox)
 from PyQt5.QtWebEngineWidgets import QWebEngineView  # 新增Web引擎组件
-from PyQt5.QtCore import Qt, QUrl, QThread, QEvent
+from PyQt5.QtCore import Qt, QUrl, QThread, QEvent, QSettings
 from PyQt5.QtGui import QTextCursor, QIcon
 from src.Excel_Info import GetWriteInfo
 from src.Excel_Writer import ExcelWriter
+from window.settings_dialog import SettingsDialog
 import time
 from pathlib import Path
 from collections import Counter, defaultdict
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 # 自定义日志处理器，用于将日志输出到GUI窗口
 class QTextEditLogger(logging.Handler):
@@ -83,24 +84,97 @@ class NewWindow(QDialog):
             self.setWindowTitle(f"HTML查看器 - {selected_item}")
             self.setGeometry(0, 0, 1100, 800)
 
-            layout = QVBoxLayout()
+            self.html_base_path = Path(html_base_path)
 
-            # 创建Web视图组件
+            # 星期名称列表
+            self.weekday_names = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+
+            # 自动检测北京时区 (UTC+8) 当前星期
+            beijing_tz = timezone(timedelta(hours=8))
+            current_weekday = datetime.now(beijing_tz).weekday()  # Monday=0, Sunday=6
+            self.default_day = self.weekday_names[current_weekday]
+            self.current_day = self.default_day
+
+            layout = QVBoxLayout()
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(0)
+
+            # 工具栏：星期选择（紧凑）
+            toolbar_widget = QWidget()
+            toolbar_widget.setMaximumHeight(28)
+            toolbar_widget.setStyleSheet("background-color: #f5f5f5; border-bottom: 1px solid #ddd;")
+            toolbar_layout = QHBoxLayout(toolbar_widget)
+            toolbar_layout.setContentsMargins(4, 1, 4, 1)
+            toolbar_layout.setSpacing(3)
+            toolbar_layout.addWidget(QLabel("高亮:"))
+            self.day_combo = QComboBox()
+            self.day_combo.setMaximumWidth(80)
+            self.day_combo.setStyleSheet("font-size: 11px;")
+            self.day_combo.addItems(self.weekday_names)
+            idx = self.weekday_names.index(self.default_day)
+            self.day_combo.setCurrentIndex(idx)
+            self.day_combo.currentTextChanged.connect(self._on_day_changed)
+            toolbar_layout.addWidget(self.day_combo)
+            toolbar_layout.addStretch()
+            layout.addWidget(toolbar_widget)
+
+            # Web视图
             self.web_view = QWebEngineView()
 
-            # 构建完整文件路径
-            self.html_path = Path(html_base_path)
-
-            if self.html_path.exists():
-                self.web_view.load(QUrl.fromLocalFile(str(self.html_path)))
+            if self.html_base_path.exists():
+                self.web_view.load(QUrl.fromLocalFile(str(self.html_base_path)))
             else:
-                self.web_view.setHtml(f"<h1>文件未找到</h1><p>{self.html_path}</p>")
+                self.web_view.setHtml(f"<h1>文件未找到</h1><p>{self.html_base_path}</p>")
+
+            # 页面加载完成后注入高亮JS
+            self.web_view.loadFinished.connect(self._inject_highlight)
 
             layout.addWidget(self.web_view)
             self.setLayout(layout)
-            
+
         except Exception as e:
             QMessageBox.warning(self, "错误", "当前HTML文件路径错误，请检查！")
+
+    def _on_day_changed(self, day_text):
+        """用户切换星期时重新注入高亮"""
+        self.current_day = day_text
+        self._inject_highlight()
+
+    def _inject_highlight(self, ok=True):
+        """通过 JavaScript 高亮当前星期文字"""
+        if not ok:
+            return
+        js_code = f"""
+        (function() {{
+            var oldSpans = document.querySelectorAll('.weekday-highlight');
+            for (var i = 0; i < oldSpans.length; i++) {{
+                var parent = oldSpans[i].parentNode;
+                var txt = document.createTextNode(oldSpans[i].textContent);
+                parent.replaceChild(txt, oldSpans[i]);
+                parent.normalize();
+            }}
+            var target = "{self.current_day}";
+            if (!target) return;
+            var walker = document.createTreeWalker(
+                document.body, NodeFilter.SHOW_TEXT, null, false
+            );
+            var nodes = [];
+            while (walker.nextNode()) nodes.push(walker.currentNode);
+            for (var i = 0; i < nodes.length; i++) {{
+                var node = nodes[i];
+                if (node.textContent.indexOf(target) !== -1) {{
+                    var span = document.createElement('span');
+                    span.className = 'weekday-highlight';
+                    span.style.backgroundColor = 'yellow';
+                    span.style.color = 'red';
+                    span.style.fontWeight = 'bold';
+                    span.textContent = node.textContent;
+                    node.parentNode.replaceChild(span, node);
+                }}
+            }}
+        }})();
+        """
+        self.web_view.page().runJavaScript(js_code)
 
 
 
@@ -165,6 +239,7 @@ class EnhancedDataEditor(QMainWindow):
             top_data = self.get_info.get_tabel_info()
             left_items, excel_name = self.get_info.get_file_and_excel_info()
         self.file_path = file_path  # 存储文件夹路径，供图片模式查找txt文件
+        self.sheet_name = sheet_name  # 存储sheet名，供后台线程使用
         # 初始化数据
         if left_items is None:
             self.left_items = ['八神竞猜', '财神密码', '红龙'] + [f"项目{i}" for i in range(4, 15)]
@@ -194,8 +269,7 @@ class EnhancedDataEditor(QMainWindow):
             self.mapping = self.get_info.get_mapping()
             self.header_bases = self.get_info.get_header_bases()
             self.url = self.get_info.get_file_dict()
-            self.sheet_name = sheet_name  # 存储sheet名，供后台线程使用
-        
+
         # 初始化数据存储，并允许通过update引入新数据
         self.data_storage = {item: {row[0]: list(row[2:]) for row in self.top_data} 
                            for item in self.left_items}
@@ -298,63 +372,80 @@ class EnhancedDataEditor(QMainWindow):
         right_layout.addWidget(self.table)
     
 
-        # 按钮区域 - 重新设计布局
-        # 顶部按钮行：重新选择路径按钮放在左上角
-        top_btn_layout = QHBoxLayout()
+        # 按钮区域 - 三色分行布局
+        # ── 绿色按钮行 ──
+        green_btn_layout = QHBoxLayout()
         reload_btn = QPushButton("🔄 重新选择路径")
         reload_btn.setStyleSheet("""
             QPushButton {
                 background-color: #4CAF50;
                 color: white;
                 font-weight: bold;
-                padding: 8px 16px;
-                border-radius: 6px;
-                border: 2px solid #45a049;
+                padding: 6px 12px;
+                border-radius: 4px;
+                border: 1px solid #45a049;
             }
-            QPushButton:hover {
-                background-color: #45a049;
-                border: 2px solid #3d8b40;
-            }
-            QPushButton:pressed {
-                background-color: #3d8b40;
-            }
+            QPushButton:hover { background-color: #45a049; border: 1px solid #3d8b40; }
+            QPushButton:pressed { background-color: #3d8b40; }
         """)
         reload_btn.clicked.connect(self.reload_paths)
-        top_btn_layout.addWidget(reload_btn)
 
-        # 图片模式：txt自动填入按钮（默认隐藏）
-        self.fill_btn = QPushButton("📥 填入数据")
-        self.fill_btn.setStyleSheet("""
+        clear_btn = QPushButton("🗑️ 清空")
+        clear_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                font-weight: bold;
+                padding: 6px 12px;
+                border-radius: 4px;
+                border: 1px solid #45a049;
+            }
+            QPushButton:hover { background-color: #45a049; border: 1px solid #3d8b40; }
+            QPushButton:pressed { background-color: #3d8b40; }
+        """)
+        clear_btn.clicked.connect(self._clear_current_page)
+
+        green_btn_layout.addWidget(reload_btn)
+        green_btn_layout.addWidget(clear_btn)
+        green_btn_layout.addStretch()
+
+        # ── 橙色按钮行 ──
+        orange_btn_layout = QHBoxLayout()
+        orange_style = """
             QPushButton {
                 background-color: #FF9800;
                 color: white;
                 font-weight: bold;
-                padding: 8px 16px;
-                border-radius: 6px;
-                border: 2px solid #F57C00;
+                padding: 6px 12px;
+                border-radius: 4px;
+                border: 1px solid #F57C00;
+                min-width: 80px;
             }
-            QPushButton:hover { background-color: #F57C00; }
+            QPushButton:hover { background-color: #F57C00; border: 1px solid #E65100; }
             QPushButton:pressed { background-color: #E65100; }
-        """)
-        self.fill_btn.clicked.connect(self._on_fill_from_txt)
-        self.fill_btn.setVisible(False)  # 初始隐藏
-        top_btn_layout.addWidget(self.fill_btn)
+        """
 
-        top_btn_layout.addStretch()  # 将按钮推到左侧
-        
-        # 主功能按钮行
-        btn_layout = QHBoxLayout()
-        
-        # 创建功能按钮
-        open_btn = QPushButton("📂 打开")
+        self.fill_btn = QPushButton("📥 填入数据")
+        self.fill_btn.setStyleSheet(orange_style)
+        self.fill_btn.clicked.connect(self._on_fill_from_txt)
+        self.fill_btn.setVisible(False)
+
         refresh_btn = QPushButton("🔄 刷新")
-        save_btn = QPushButton("💾 保存")
-        export_btn = QPushButton("📤 导出")
-        sort_btn = QPushButton("📊 排序")
-        json_btn = QPushButton("📝 写入JSON")
-        
-        # 设置按钮样式
-        button_style = """
+        refresh_btn.setStyleSheet(orange_style)
+        refresh_btn.clicked.connect(self.refresh_table)
+
+        settings_btn = QPushButton("⚙️ 设置")
+        settings_btn.setStyleSheet(orange_style)
+        settings_btn.clicked.connect(self._open_settings)
+
+        orange_btn_layout.addWidget(self.fill_btn)
+        orange_btn_layout.addWidget(refresh_btn)
+        orange_btn_layout.addWidget(settings_btn)
+        orange_btn_layout.addStretch()
+
+        # ── 蓝色按钮行 ──
+        blue_btn_layout = QHBoxLayout()
+        blue_style = """
             QPushButton {
                 background-color: #2196F3;
                 color: white;
@@ -364,41 +455,39 @@ class EnhancedDataEditor(QMainWindow):
                 border: 1px solid #1976D2;
                 min-width: 80px;
             }
-            QPushButton:hover {
-                background-color: #1976D2;
-                border: 1px solid #1565C0;
-            }
-            QPushButton:pressed {
-                background-color: #1565C0;
-            }
+            QPushButton:hover { background-color: #1976D2; border: 1px solid #1565C0; }
+            QPushButton:pressed { background-color: #1565C0; }
         """
-        
-        open_btn.setStyleSheet(button_style)
-        refresh_btn.setStyleSheet(button_style)
-        save_btn.setStyleSheet(button_style)
-        export_btn.setStyleSheet(button_style)
-        sort_btn.setStyleSheet(button_style)
-        json_btn.setStyleSheet(button_style)
-        
-        # 连接信号
-        refresh_btn.clicked.connect(self.refresh_table)
+
+        open_btn = QPushButton("📂 打开")
+        save_btn = QPushButton("💾 保存")
+        export_btn = QPushButton("📤 导出")
+        sort_btn = QPushButton("📊 排序")
+        json_btn = QPushButton("📝 写入JSON")
+
+        open_btn.setStyleSheet(blue_style)
+        save_btn.setStyleSheet(blue_style)
+        export_btn.setStyleSheet(blue_style)
+        sort_btn.setStyleSheet(blue_style)
+        json_btn.setStyleSheet(blue_style)
+
+        open_btn.clicked.connect(self.on_open_clicked)
         save_btn.clicked.connect(self.save_changes)
         export_btn.clicked.connect(self.export_data)
-        open_btn.clicked.connect(self.on_open_clicked)
         sort_btn.clicked.connect(self.sort)
         json_btn.clicked.connect(self.export_json)
-        
-        # 添加按钮到布局
-        btn_layout.addWidget(open_btn)
-        btn_layout.addWidget(refresh_btn)
-        btn_layout.addWidget(save_btn)
-        btn_layout.addWidget(export_btn)
-        btn_layout.addWidget(sort_btn)
-        btn_layout.addWidget(json_btn)
-        
-        # 添加布局到右侧布局
-        right_layout.addLayout(top_btn_layout)
-        right_layout.addLayout(btn_layout)
+
+        blue_btn_layout.addWidget(open_btn)
+        blue_btn_layout.addWidget(save_btn)
+        blue_btn_layout.addWidget(export_btn)
+        blue_btn_layout.addWidget(sort_btn)
+        blue_btn_layout.addWidget(json_btn)
+        blue_btn_layout.addStretch()
+
+        # 添加三行到右侧布局
+        right_layout.addLayout(green_btn_layout)
+        right_layout.addLayout(orange_btn_layout)
+        right_layout.addLayout(blue_btn_layout)
         
         main_layout.addLayout(right_layout)
         self.setCentralWidget(main_widget)
@@ -424,7 +513,7 @@ class EnhancedDataEditor(QMainWindow):
         right_layout.addWidget(self.log_output)  # 添加到右侧布局
 
         # 版本号标签（不起眼的右下角）
-        version_label = QLabel("v2.0.5")
+        version_label = QLabel("v2.1.2")
         version_label.setStyleSheet("color: #999; font-size: 10px; padding: 2px;")
         version_label.setAlignment(Qt.AlignRight | Qt.AlignBottom)
         right_layout.addWidget(version_label)
@@ -604,6 +693,34 @@ class EnhancedDataEditor(QMainWindow):
         except Exception as e:
             logger.exception("保存数据时发生错误")
             QMessageBox.warning(self, "警告", f"保存失败：{str(e)}")
+
+    def _clear_current_page(self):
+        """清空当前页面所有输入内容及已保存数据"""
+        reply = QMessageBox.question(
+            self, '确认清空',
+            '将清空当前页面所有输入内容及已保存数据，是否继续？',
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        if reply != QMessageBox.Yes:
+            return
+        try:
+            selected_item = self.radio_group.checkedButton().text()
+            # 清空表格显示
+            for row in range(self.table.rowCount()):
+                for col in range(2, self.table.columnCount()):
+                    item = self.table.item(row, col)
+                    if item is not None:
+                        item.setText("")
+            # 清空 data_storage 中对应的数据
+            if selected_item in self.data_storage:
+                for code in self.data_storage[selected_item]:
+                    self.data_storage[selected_item][code] = ['', '', '', '']
+                self.is_dirty = True
+            self.logger.info(f"已清空 *{selected_item}* 的输入内容")
+        except Exception as e:
+            logger.exception("清空页面时发生错误")
+            QMessageBox.warning(self, "警告", f"清空失败：{str(e)}")
 
     def on_open_clicked(self):
         """
@@ -885,17 +1002,118 @@ class EnhancedDataEditor(QMainWindow):
                 if not folder_path or not excel_path or not sheet_name:
                     QMessageBox.critical(None, "错误", "必须选择有效的文件夹、Excel文件和sheet")
                     return
-                
+
+                # 保存到 QSettings
+                settings = QSettings("config.ini", QSettings.IniFormat)
+                if not settings.value("paths/mapping_path"):
+                    settings.setValue("paths/mapping_path", "mapping/mapping_data.txt")
+                settings.setValue("paths/html_folder_path", folder_path)
+                settings.setValue("paths/excel_path", excel_path)
+                settings.setValue("paths/json_path", json_path)
+                settings.setValue("paths/sheet_name", sheet_name)
+
                 # 创建新的主窗口实例
                 new_window = EnhancedDataEditor(excel_path=excel_path,
                                                file_path=folder_path,
                                                json_path=json_path,
                                                sheet_name=sheet_name)
                 new_window.show()
-                
+
         except Exception as e:
             logger.exception("重新加载路径时发生错误")
             QMessageBox.critical(None, "错误", f"重新加载失败：{str(e)}")
+
+    def _open_settings(self):
+        """打开设置对话框"""
+        settings = QSettings("config.ini", QSettings.IniFormat)
+        current_paths = {
+            'mapping_path': settings.value("paths/mapping_path", "mapping/mapping_data.txt"),
+            'html_folder_path': settings.value("paths/html_folder_path", ""),
+            'excel_path': settings.value("paths/excel_path", ""),
+            'json_path': settings.value("paths/json_path", ""),
+            'sheet_name': settings.value("paths/sheet_name", ""),
+        }
+
+        dialog = SettingsDialog(current_paths, parent=self)
+        if dialog.exec_() == QDialog.Accepted:
+            new_paths = dialog.get_paths()
+            self._reload_with_new_paths(new_paths)
+
+    def _reload_with_new_paths(self, new_paths: dict):
+        """根据新路径重新初始化数据"""
+        html_folder = new_paths['html_folder_path']
+        excel_path = new_paths['excel_path']
+        json_path = new_paths['json_path']
+        mapping_path = new_paths['mapping_path']
+        sheet_name = new_paths.get('sheet_name', self.sheet_name)
+
+        if not html_folder or not excel_path:
+            QMessageBox.warning(self, "警告", "HTML文件夹路径和Excel路径不能为空")
+            return
+
+        if not sheet_name:
+            QMessageBox.warning(self, "警告", "请选择Excel Sheet")
+            return
+
+        try:
+            # 用新路径重新创建 GetWriteInfo（传入 mapping_path 和 sheet_name）
+            self.get_info = GetWriteInfo(html_folder, excel_path, sheet_name, mapping_path)
+            top_data = self.get_info.get_tabel_info()
+            left_items, excel_name = self.get_info.get_file_and_excel_info()
+
+            # 更新实例属性
+            self.file_path = html_folder
+            self.sheet_name = sheet_name
+            self.top_data = top_data
+            self.left_items = left_items
+            self.flag = True
+            self.fixed_values = {row[0]: row[1] for row in self.top_data}
+            self.writer = ExcelWriter(excel_path, sheet_name)
+            self.excel_first_columns = excel_name
+            self.mapping = self.get_info.get_mapping()
+            self.header_bases = self.get_info.get_header_bases()
+            self.url = self.get_info.get_file_dict()
+
+            # 重新构建 data_storage
+            self.data_storage = {item: {row[0]: list(row[2:]) for row in self.top_data}
+                               for item in self.left_items}
+
+            # 重新加载图片模式配置
+            self._load_pic_config()
+
+            # 重新导入 JSON 数据
+            if json_path and os.path.exists(json_path):
+                json_data = self.get_info.get_json(json_path)
+                if json_data and isinstance(json_data, dict):
+                    first_key = next(iter(json_data))
+                    first_val = json_data[first_key]
+                    if isinstance(first_val, dict) and any(
+                        isinstance(v, list) for v in first_val.values()
+                    ):
+                        for code, categories in json_data.items():
+                            for category, scores in categories.items():
+                                if category in self.data_storage and code in self.data_storage[category]:
+                                    self.data_storage[category][code] = scores
+                    else:
+                        self.data_storage.update(json_data)
+
+            # 重建单选按钮并刷新表格
+            self._rebuild_radio_buttons()
+            self.refresh_table()
+
+            # 保存路径到 QSettings
+            settings = QSettings("config.ini", QSettings.IniFormat)
+            settings.setValue("paths/mapping_path", mapping_path)
+            settings.setValue("paths/html_folder_path", html_folder)
+            settings.setValue("paths/excel_path", excel_path)
+            settings.setValue("paths/json_path", json_path)
+            settings.setValue("paths/sheet_name", sheet_name)
+
+            self.logger.info("设置已更新，数据已重新加载")
+
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"重新加载数据失败: {str(e)}")
+            self.logger.exception("重新加载数据失败")
 
 if __name__ == "__main__":
     from src.Excel_Info import GetWriteInfo
