@@ -80,6 +80,7 @@ logger = setup_logger()
 class NewWindow(QDialog):
     def __init__(self, selected_item, html_base_path, parent=None):
         super().__init__(parent)
+        self.setAttribute(Qt.WA_DeleteOnClose)  # 关闭时自动释放资源
         try:
             self.setWindowTitle(f"HTML查看器 - {selected_item}")
             self.setGeometry(0, 0, 1100, 800)
@@ -134,6 +135,15 @@ class NewWindow(QDialog):
 
         except Exception as e:
             QMessageBox.warning(self, "错误", "当前HTML文件路径错误，请检查！")
+
+    def closeEvent(self, event):
+        """关闭窗口时释放 Web 引擎资源，防止 QtWebEngineProcess 进程残留"""
+        if hasattr(self, 'web_view'):
+            self.web_view.setPage(None)
+            self.web_view.stop()
+            self.web_view.deleteLater()
+            self.web_view = None
+        super().closeEvent(event)
 
     def _on_day_changed(self, day_text):
         """用户切换星期时重新注入高亮"""
@@ -513,7 +523,7 @@ class EnhancedDataEditor(QMainWindow):
         right_layout.addWidget(self.log_output)  # 添加到右侧布局
 
         # 版本号标签（不起眼的右下角）
-        version_label = QLabel("v2.1.2")
+        version_label = QLabel("v2.1.3")
         version_label.setStyleSheet("color: #999; font-size: 10px; padding: 2px;")
         version_label.setAlignment(Qt.AlignRight | Qt.AlignBottom)
         right_layout.addWidget(version_label)
@@ -722,12 +732,18 @@ class EnhancedDataEditor(QMainWindow):
             logger.exception("清空页面时发生错误")
             QMessageBox.warning(self, "警告", f"清空失败：{str(e)}")
 
+    def _on_child_window_destroyed(self, obj):
+        """子窗口销毁时，仅当它是当前窗口时才清除引用"""
+        if self.current_window is obj:
+            self.current_window = None
+
     def on_open_clicked(self):
         """
         打开文件：HTML模式打开HTML，图片模式打开txt
         """
         if self.current_window:
             self.current_window.close()
+            self.current_window = None
         selected_item = self.radio_group.checkedButton().text()
 
         if self.data_mode == 'pic':
@@ -751,7 +767,7 @@ class EnhancedDataEditor(QMainWindow):
                 layout.addWidget(text_edit)
                 dialog.setLayout(layout)
                 self.current_window = dialog
-                self.current_window.destroyed.connect(lambda: setattr(self, 'current_window', None))
+                self.current_window.destroyed.connect(self._on_child_window_destroyed)
                 self.current_window.show()
             except Exception:
                 QMessageBox.warning(self, "警告", "读取txt文件失败")
@@ -762,7 +778,7 @@ class EnhancedDataEditor(QMainWindow):
                 self.current_window = NewWindow(selected_item,
                                               html_base_path=url,
                                               parent=self)
-                self.current_window.destroyed.connect(lambda: setattr(self, 'current_window', None))
+                self.current_window.destroyed.connect(self._on_child_window_destroyed)
                 self.current_window.show()
             except:
                 QMessageBox.warning(self, "警告", "文件路径不存在，或者文件名称错误")
@@ -846,10 +862,14 @@ class EnhancedDataEditor(QMainWindow):
 
     def _run_write_worker(self, write_ops, task_name):
         """启动后台写入线程，不阻塞UI"""
-        # 防止重复启动
-        if self.worker_thread and self.worker_thread.isRunning():
-            QMessageBox.warning(self, "提示", "已有写入任务正在进行，请等待完成")
-            return
+        # 等待上一个线程完全结束
+        if self.worker_thread is not None:
+            if self.worker_thread.isRunning():
+                QMessageBox.warning(self, "提示", "已有写入任务正在进行，请等待完成")
+                return
+            # 等待线程彻底退出
+            self.worker_thread.wait(3000)
+            self.worker_thread = None
 
         from src.worker import ExcelWriteWorker
 
@@ -866,8 +886,7 @@ class EnhancedDataEditor(QMainWindow):
         self.worker.finished.connect(self.worker_thread.quit)
         self.worker.finished.connect(self._on_write_finished)
         self.worker.progress.connect(self._on_write_progress)
-        self.worker_thread.finished.connect(self.worker.deleteLater)
-        self.worker_thread.finished.connect(lambda: setattr(self, 'worker_thread', None))
+        self.worker_thread.finished.connect(self._on_thread_finished)
 
         self.worker_thread.start()
 
@@ -879,6 +898,13 @@ class EnhancedDataEditor(QMainWindow):
         self.progress_dialog.setCancelButton(None)
         self.progress_dialog.setMinimumDuration(0)
         self.progress_dialog.show()
+
+    def _on_thread_finished(self):
+        """线程完成清理（避免 lambda 引用被覆盖的问题）"""
+        if self.worker is not None:
+            self.worker.deleteLater()
+            self.worker = None
+        self.worker_thread = None
 
     def _on_write_progress(self, current, total):
         """写入进度更新（主线程）"""

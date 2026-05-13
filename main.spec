@@ -26,6 +26,7 @@ a = Analysis(
         'window.table_qt',
         'window.table_qt_2',
         'window.table_conbine',
+        'window.settings_dialog',
     ],
     hookspath=[],
     hooksconfig={},

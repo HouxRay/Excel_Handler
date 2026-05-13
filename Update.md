@@ -4,6 +4,36 @@
 
 ---
 
+## 2026-05-14 (修复) — 写入线程死锁修复、HTML窗口内存泄漏修复 (v2.1.2 → v2.1.3)
+
+### 1. 多线程写入死锁修复
+
+**文件：** [window/table_qt.py](window/table_qt.py) — `_run_write_worker`、`_on_thread_finished`
+
+- **问题：** 连续多次快速写入后程序卡死在"正在后台写入"，旧线程的 `finished` lambda 会覆盖新线程的 `worker_thread` 引用，导致线程状态错乱、资源泄漏，最终死锁
+- **修复：**
+  - 移除 `lambda: setattr(self, 'worker_thread', None)`，改用 `_on_thread_finished()` 方法
+  - 新增 `_on_thread_finished` 方法：安全清理 `worker` 和 `worker_thread`
+  - `_run_write_worker` 启动前调用 `worker_thread.wait(3000)` 等待旧线程完全退出
+  - 防止 `worker_thread` 引用被旧线程的延迟信号意外清空
+
+### 2. HTML 查看器内存泄漏修复
+
+**文件：** [window/table_qt.py](window/table_qt.py) — `NewWindow` 类
+
+- **问题：** 每次打开 HTML 窗口都会新增一个 `QtWebEngineProcess.exe` 进程（10-100MB），关闭窗口后进程不释放，持续累积
+- **根因：** `QDialog.close()` 仅隐藏窗口，`QWebEngineView` 的渲染进程未被释放
+- **修复：**
+  - `NewWindow.__init__` 添加 `setAttribute(Qt.WA_DeleteOnClose)` 确保关闭时自动删除窗口
+  - 新增 `closeEvent`：显式调用 `web_view.setPage(None)` + `stop()` + `deleteLater()` 释放渲染进程
+  - `on_open_clicked` 关闭旧窗口后立即设置 `self.current_window = None`
+
+### 3. 版本号更新
+
+- `v2.1.2` → `v2.1.3`（Bug 修复）
+
+---
+
 ## 2026-05-14 — HTML星期高亮、设置对话框、清空按钮、刷新颜色变更 (v2.0.5 → v2.1.0)
 
 ### 1. HTML星期高亮
