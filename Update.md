@@ -4,6 +4,41 @@
 
 ---
 
+## 2026-05-15 — Pic模式txt文件创建、映射关系可视化配置 (v2.1.3 → v2.2.0)
+
+### 1. Pic模式 — 新建/编辑txt文件
+
+**文件：** [window/table_qt.py](window/table_qt.py) — `on_open_clicked`、`_show_pic_txt_dialog`（新增）
+
+- **问题：** 图片模式下点击"打开"时，若txt文件不存在则直接报错，用户需手动创建文件
+- **修复：**
+  - 新增 `_show_pic_txt_dialog()` 方法：展示可编辑的 QTextEdit 对话框
+  - txt 存在时：加载现有内容到编辑框，允许修改并保存
+  - txt 不存在时：显示空白编辑框，点击"保存"自动创建文件
+  - 对话框提供"保存"和"取消"按钮，取消不产生文件
+
+### 2. 映射关系可视化配置
+
+**文件：** [src/mapping_manager.py](src/mapping_manager.py)（新建）、[window/settings_dialog.py](window/settings_dialog.py)、[src/Excel_Writer.py](src/Excel_Writer.py)、[window/table_qt.py](window/table_qt.py)
+
+- **问题：** MATCH_DICT（代码→中文）和键盘映射（空格/反引号→0）硬编码在源码中，无法查看或自定义
+- **修复：**
+  - 新建 `src/mapping_manager.py`：统一管理映射的加载、保存、重置逻辑
+  - 映射通过 QSettings 持久化（JSON 格式），键为 `mappings/match_dict` 和 `mappings/keyboard`
+  - SettingsDialog 重组为 QTabWidget 双标签页："路径设置" + "映射设置"
+  - 映射设置页包含两个可编辑表格：MATCH_DICT 和键盘映射
+  - 每个表格支持添加行、删除选中行、"重置默认值"恢复默认
+  - `ExcelWriter` 新增 `reload_match_dict()` 函数，从 QSettings 加载自定义映射
+  - `SpaceToZeroDelegate` 改为从 mapping_manager 读取键盘映射，不再硬编码
+  - `save_changes()` 和 `_on_fill_from_txt()` 中 `.replace()` 统一使用 `apply_keyboard_mappings()`
+  - 设置"应用"后自动同步 MATCH_DICT 和键盘映射到运行时
+
+### 3. 版本号更新
+
+- `v2.1.3` → `v2.2.0`（功能升级）
+
+---
+
 ## 2026-05-14 (修复) — 写入线程死锁修复、HTML窗口内存泄漏修复 (v2.1.2 → v2.1.3)
 
 ### 1. 多线程写入死锁修复

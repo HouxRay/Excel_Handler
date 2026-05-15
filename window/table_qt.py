@@ -7,8 +7,9 @@ from PyQt5.QtWebEngineWidgets import QWebEngineView  # 新增Web引擎组件
 from PyQt5.QtCore import Qt, QUrl, QThread, QEvent, QSettings
 from PyQt5.QtGui import QTextCursor, QIcon
 from src.Excel_Info import GetWriteInfo
-from src.Excel_Writer import ExcelWriter
+from src.Excel_Writer import ExcelWriter, reload_match_dict
 from window.settings_dialog import SettingsDialog
+from src.mapping_manager import apply_keyboard_mappings, get_keyboard_mappings
 import time
 from pathlib import Path
 from collections import Counter, defaultdict
@@ -192,7 +193,13 @@ class NewWindow(QDialog):
 
 
 class SpaceToZeroDelegate(QStyledItemDelegate):
-    """编辑代理：编辑时按空格/反引号自动替换为0，同时作为数据级别的兜底"""
+    """编辑代理：空格/反引号强制替换为0，并支持自定义 text() 映射"""
+    def __init__(self, parent=None, mappings=None):
+        super().__init__(parent)
+        if mappings is None:
+            mappings = get_keyboard_mappings()
+        self._mappings = mappings
+
     def createEditor(self, parent, option, index):
         editor = super().createEditor(parent, option, index)
         editor.installEventFilter(self)
@@ -201,15 +208,21 @@ class SpaceToZeroDelegate(QStyledItemDelegate):
     def eventFilter(self, obj, event):
         if event.type() == QEvent.KeyPress:
             key = event.key()
+            # 空格 / 反引号强行替换为 0（key() 优先，不依赖 text()）
             if key == Qt.Key_Space or key == Qt.Key_QuoteLeft:
                 obj.insert("0")
+                return True
+            # 也支持 text() 驱动的自定义映射（如用户添加 "/" → "1"）
+            text = event.text()
+            if text and text in self._mappings:
+                obj.insert(self._mappings[text])
                 return True
         return super().eventFilter(obj, event)
 
     def setModelData(self, editor, model, index):
-        """提交编辑前将空格/反引号替换为0"""
+        """提交编辑前应用键盘映射替换"""
         text = editor.text()
-        text = text.replace(" ", "0").replace("`", "0")
+        text = apply_keyboard_mappings(text, self._mappings)
         model.setData(index, text)
 
 
@@ -250,6 +263,10 @@ class EnhancedDataEditor(QMainWindow):
             left_items, excel_name = self.get_info.get_file_and_excel_info()
         self.file_path = file_path  # 存储文件夹路径，供图片模式查找txt文件
         self.sheet_name = sheet_name  # 存储sheet名，供后台线程使用
+
+        # 从 QSettings 加载持久化的 MATCH_DICT（有则用，无则默认）
+        reload_match_dict()
+
         # 初始化数据
         if left_items is None:
             self.left_items = ['八神竞猜', '财神密码', '红龙'] + [f"项目{i}" for i in range(4, 15)]
@@ -523,7 +540,7 @@ class EnhancedDataEditor(QMainWindow):
         right_layout.addWidget(self.log_output)  # 添加到右侧布局
 
         # 版本号标签（不起眼的右下角）
-        version_label = QLabel("v2.1.3")
+        version_label = QLabel("v2.2.1")
         version_label.setStyleSheet("color: #999; font-size: 10px; padding: 2px;")
         version_label.setAlignment(Qt.AlignRight | Qt.AlignBottom)
         right_layout.addWidget(version_label)
@@ -636,7 +653,7 @@ class EnhancedDataEditor(QMainWindow):
                 parts = line.split()
                 if len(parts) >= 1:
                     code = parts[0]
-                    values = [v.replace(" ", "0").replace("`", "0") for v in parts[1:5]]
+                    values = [apply_keyboard_mappings(v) for v in parts[1:5]]
                     while len(values) < 4:
                         values.append('')
                     txt_data[code] = values
@@ -697,7 +714,7 @@ class EnhancedDataEditor(QMainWindow):
             selected_item = self.radio_group.checkedButton().text()
             for row in range(self.table.rowCount()):
                 code = self.table.item(row, 0).text()
-                new_values = [self.table.item(row, col).text().replace(" ", "0").replace("`", "0") for col in range(2, 6)]
+                new_values = [apply_keyboard_mappings(self.table.item(row, col).text()) for col in range(2, 6)]
                 self.data_storage[selected_item][code] = new_values
             self.is_dirty = True
         except Exception as e:
@@ -747,30 +764,7 @@ class EnhancedDataEditor(QMainWindow):
         selected_item = self.radio_group.checkedButton().text()
 
         if self.data_mode == 'pic':
-            # 图片模式：尝试打开对应的txt文件
-            txt_path = None
-            if self.file_path:
-                txt_path = os.path.join(self.file_path, f"{selected_item}.txt")
-            if not txt_path or not os.path.exists(txt_path):
-                QMessageBox.warning(self, "警告", f"未找到对应的txt文件: {txt_path}")
-                return
-            try:
-                with open(txt_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                dialog = QDialog(self)
-                dialog.setWindowTitle(f"图片数据 - {selected_item}")
-                dialog.setGeometry(200, 200, 600, 400)
-                layout = QVBoxLayout()
-                text_edit = QTextEdit()
-                text_edit.setReadOnly(True)
-                text_edit.setPlainText(content)
-                layout.addWidget(text_edit)
-                dialog.setLayout(layout)
-                self.current_window = dialog
-                self.current_window.destroyed.connect(self._on_child_window_destroyed)
-                self.current_window.show()
-            except Exception:
-                QMessageBox.warning(self, "警告", "读取txt文件失败")
+            self._show_pic_txt_dialog(selected_item)
         else:
             # HTML模式：原有逻辑
             try:
@@ -783,7 +777,60 @@ class EnhancedDataEditor(QMainWindow):
             except:
                 QMessageBox.warning(self, "警告", "文件路径不存在，或者文件名称错误")
 
-            
+    def _show_pic_txt_dialog(self, selected_item):
+        """Pic模式：可编辑的txt对话框，文件不存在时保存即创建"""
+        if not self.file_path:
+            QMessageBox.warning(self, "警告", "未设置文件夹路径")
+            return
+
+        txt_path = os.path.join(self.file_path, f"{selected_item}.txt")
+
+        # 读取已有内容（不存在则为空）
+        content = ""
+        if os.path.exists(txt_path):
+            try:
+                with open(txt_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+            except Exception:
+                QMessageBox.warning(self, "警告", "读取txt文件失败")
+                return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"图片数据 - {selected_item}")
+        dialog.setGeometry(200, 200, 600, 400)
+        layout = QVBoxLayout()
+
+        text_edit = QTextEdit()
+        text_edit.setPlainText(content)
+        layout.addWidget(text_edit)
+
+        # 按钮
+        btn_layout = QHBoxLayout()
+        save_btn = QPushButton("保存")
+        cancel_btn = QPushButton("取消")
+
+        def on_save():
+            try:
+                os.makedirs(os.path.dirname(txt_path), exist_ok=True)
+                with open(txt_path, 'w', encoding='utf-8') as f:
+                    f.write(text_edit.toPlainText())
+                self.logger.info(f"已保存: {txt_path}")
+            except Exception as e:
+                QMessageBox.warning(dialog, "错误", f"保存失败: {str(e)}")
+                return
+            dialog.accept()
+
+        save_btn.clicked.connect(on_save)
+        cancel_btn.clicked.connect(dialog.reject)
+        btn_layout.addWidget(save_btn)
+        btn_layout.addWidget(cancel_btn)
+        layout.addLayout(btn_layout)
+
+        dialog.setLayout(layout)
+        self.current_window = dialog
+        self.current_window.destroyed.connect(self._on_child_window_destroyed)
+        self.current_window.show()
+
     def export_data(self):
         """
         导出数据 - 主线程收集验证，后台线程写入（不阻塞UI）
@@ -1063,6 +1110,9 @@ class EnhancedDataEditor(QMainWindow):
         dialog = SettingsDialog(current_paths, parent=self)
         if dialog.exec_() == QDialog.Accepted:
             new_paths = dialog.get_paths()
+            # 重载 MATCH_DICT 和键盘映射（可能在设置中已修改）
+            reload_match_dict()
+            self.table.setItemDelegate(SpaceToZeroDelegate(self.table))
             self._reload_with_new_paths(new_paths)
 
     def _reload_with_new_paths(self, new_paths: dict):

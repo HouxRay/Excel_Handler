@@ -20,6 +20,14 @@ MATCH_DICT={
     "fsf":"分胜负",
 }
 
+
+def reload_match_dict():
+    """从 QSettings 重新加载 MATCH_DICT（用于设置变更后同步）"""
+    from src.mapping_manager import get_match_dict
+    MATCH_DICT.clear()
+    MATCH_DICT.update(get_match_dict())
+
+
 class ExcelWriter:
     def __init__(self, excel_path: str, sheet_name: str = None):
         """

@@ -20,6 +20,7 @@
 │   ├── File_Reader.py           # 文件系统读取（HTML 文件遍历、文件名提取）
 │   ├── Name_Matcher.py          # 名称匹配（文件名 ↔ Excel 行映射）
 │   ├── worker.py                # 后台工作线程（Excel 写入不阻塞 UI）
+│   ├── mapping_manager.py       # 映射持久化管理（MATCH_DICT + 键盘映射）
 │   ├── Data_viewer_test.py      # Tkinter 版测试数据查看器
 │   └── Name_Matcher_test1.py    # 名称匹配测试脚本
 ├── mapping/                     # 映射配置文件
@@ -122,14 +123,15 @@ python main.py
 
 ### 设置与持久化
 
-[window/settings_dialog.py](window/settings_dialog.py) 提供运行时配置：
-- 映射文件路径 / HTML 文件夹 / Excel 文件 / JSON 文件 / Sheet 选择
+[window/settings_dialog.py](window/settings_dialog.py) 提供运行时配置（QTabWidget 双标签页）：
+- **路径设置**：映射文件 / HTML 文件夹 / Excel 文件 / JSON 文件 / Sheet 选择
+- **映射设置**：MATCH_DICT（比赛结果代码→中文）和键盘映射的可视化管理
+- 映射表支持添加/删除行、"重置默认值"恢复硬编码默认值
 - 通过 `QSettings` (INI 格式) 存储到 `config.ini`
-- 启动时自动预填，修改后"应用"立即生效，"取消"提示保存
 
 ## 当前版本
 
-**v2.1.3**（2026-05-14）
+**v2.2.0**（2026-05-15）
 
 ## 依赖项
 
