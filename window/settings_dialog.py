@@ -16,7 +16,7 @@ class SettingsDialog(QDialog):
     def __init__(self, current_paths: dict, parent=None):
         super().__init__(parent)
         self.setWindowTitle("设置")
-        self.setGeometry(400, 300, 650, 520)
+        self.setGeometry(400, 300, 650, 560)
 
         self.initial_paths = dict(current_paths)
         self.current_paths = dict(current_paths)
@@ -90,9 +90,11 @@ class SettingsDialog(QDialog):
         key_group_layout.addLayout(key_btn_layout)
         mapping_layout.addWidget(key_group)
 
-        # -- 名称映射文件表格 --
-        name_group = QGroupBox("名称映射文件 (mapping_data.txt)")
-        name_group_layout = QVBoxLayout(name_group)
+        tabs.addTab(mapping_tab, "映射设置")
+
+        # === Tab 3: 名称映射 ===
+        name_tab = QWidget()
+        name_layout = QVBoxLayout(name_tab)
         self.name_mapping_table = QTableWidget()
         self.name_mapping_table.setColumnCount(2)
         self.name_mapping_table.setHorizontalHeaderLabels(["短名称", "全名称"])
@@ -104,11 +106,9 @@ class SettingsDialog(QDialog):
             lambda: self._delete_selected_rows(self.name_mapping_table),
             lambda: self._reset_name_mapping_table()
         )
-        name_group_layout.addWidget(self.name_mapping_table)
-        name_group_layout.addLayout(name_btn_layout)
-        mapping_layout.addWidget(name_group)
-
-        tabs.addTab(mapping_tab, "映射设置")
+        name_layout.addWidget(self.name_mapping_table)
+        name_layout.addLayout(name_btn_layout)
+        tabs.addTab(name_tab, "名称映射")
 
         main_layout.addWidget(tabs)
 
