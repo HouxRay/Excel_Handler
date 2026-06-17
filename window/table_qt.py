@@ -1,4 +1,5 @@
 import sys
+import re
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QScrollArea, QRadioButton, QTableWidget, QTableWidgetItem,
                              QHeaderView, QPushButton, QButtonGroup, QDialog, QLabel, QMessageBox,
@@ -142,7 +143,6 @@ class NewWindow(QDialog):
         if hasattr(self, 'web_view'):
             self.web_view.setPage(None)
             self.web_view.stop()
-            self.web_view.deleteLater()
             self.web_view = None
         super().closeEvent(event)
 
@@ -306,18 +306,20 @@ class EnhancedDataEditor(QMainWindow):
             try:
                 json_data = self.get_info.get_json(json_path)
                 if json_data and isinstance(json_data, dict):
-                    # 检测格式：新格式顶层为code，旧格式顶层为category
+                    # 检测格式：新格式顶层为code（3位数字），旧格式顶层为category（中文）
                     first_key = next(iter(json_data))
                     first_val = json_data[first_key]
-                    if isinstance(first_val, dict) and any(
-                        isinstance(v, list) for v in first_val.values()
-                    ):
+                    if isinstance(first_val, dict) and re.match(r'\d{3}', str(first_key)):
                         # 新格式：{code: {category: [scores]}}
                         imported_count = 0
                         for code, categories in json_data.items():
                             for category, scores in categories.items():
-                                if category in self.data_storage and code in self.data_storage[category]:
+                                if category in self.data_storage:
                                     self.data_storage[category][code] = scores
+                                    imported_count += 1
+                                else:
+                                    # category 不在当前映射中，添加新条目
+                                    self.data_storage[category] = {code: scores}
                                     imported_count += 1
                         logger.info(f"成功从JSON文件加载数据: {imported_count} 项")
                     else:
@@ -540,7 +542,7 @@ class EnhancedDataEditor(QMainWindow):
         right_layout.addWidget(self.log_output)  # 添加到右侧布局
 
         # 版本号标签（不起眼的右下角）
-        version_label = QLabel("v2.2.1")
+        version_label = QLabel("v2.4.0")
         version_label.setStyleSheet("color: #999; font-size: 10px; padding: 2px;")
         version_label.setAlignment(Qt.AlignRight | Qt.AlignBottom)
         right_layout.addWidget(version_label)
@@ -750,8 +752,8 @@ class EnhancedDataEditor(QMainWindow):
             QMessageBox.warning(self, "警告", f"清空失败：{str(e)}")
 
     def _on_child_window_destroyed(self, obj):
-        """子窗口销毁时，仅当它是当前窗口时才清除引用"""
-        if self.current_window is obj:
+        """子窗口销毁时，清除引用（destroyed 信号在 WA_DeleteOnClose 后可能传递 None）"""
+        if obj is None or self.current_window is obj:
             self.current_window = None
 
     def on_open_clicked(self):
@@ -759,7 +761,10 @@ class EnhancedDataEditor(QMainWindow):
         打开文件：HTML模式打开HTML，图片模式打开txt
         """
         if self.current_window:
-            self.current_window.close()
+            try:
+                self.current_window.close()
+            except RuntimeError:
+                pass  # C++ 对象已被 WA_DeleteOnClose 销毁
             self.current_window = None
         selected_item = self.radio_group.checkedButton().text()
 
@@ -796,6 +801,7 @@ class EnhancedDataEditor(QMainWindow):
                 return
 
         dialog = QDialog(self)
+        dialog.setAttribute(Qt.WA_DeleteOnClose)
         dialog.setWindowTitle(f"图片数据 - {selected_item}")
         dialog.setGeometry(200, 200, 600, 400)
         layout = QVBoxLayout()
@@ -978,6 +984,9 @@ class EnhancedDataEditor(QMainWindow):
         排序 - 内存统计在主线程，写入在后台线程
         """
         try:
+            # 先保存当前表格编辑内容到 data_storage
+            self.save_changes()
+
             stats = defaultdict(Counter)
             logger.info("开始排序")
 
@@ -1046,7 +1055,10 @@ class EnhancedDataEditor(QMainWindow):
         try:
             # 先关闭打开的HTML窗口
             if self.current_window:
-                self.current_window.close()
+                try:
+                    self.current_window.close()
+                except RuntimeError:
+                    pass
                 self.current_window = None
 
             # 确认对话框
@@ -1163,13 +1175,13 @@ class EnhancedDataEditor(QMainWindow):
                 if json_data and isinstance(json_data, dict):
                     first_key = next(iter(json_data))
                     first_val = json_data[first_key]
-                    if isinstance(first_val, dict) and any(
-                        isinstance(v, list) for v in first_val.values()
-                    ):
+                    if isinstance(first_val, dict) and re.match(r'\d{3}', str(first_key)):
                         for code, categories in json_data.items():
                             for category, scores in categories.items():
-                                if category in self.data_storage and code in self.data_storage[category]:
+                                if category in self.data_storage:
                                     self.data_storage[category][code] = scores
+                                else:
+                                    self.data_storage[category] = {code: scores}
                     else:
                         self.data_storage.update(json_data)
 

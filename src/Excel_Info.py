@@ -2,12 +2,11 @@ import src.Excel_Handler as Excel_Handler
 import src.File_Reader as File_Reader
 from src.Name_Matcher import NameMatcher
 from openpyxl import load_workbook
-from typing import List, Dict, Union
 from pathlib import Path
 
 
 class GetWriteInfo:
-    def __init__(self, file_path: Union[str, Path], excel_path: Union[str, Path],
+    def __init__(self, file_path: str | Path, excel_path: str | Path,
                  sheet_name: str = None, mapping_path: str = "mapping/mapping_data.txt"):
         """
         file_path: html文件路径

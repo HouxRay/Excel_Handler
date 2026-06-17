@@ -53,7 +53,7 @@
 
 ## 环境要求
 
-- Python 3.8+
+- Python 3.10+
 - PyQt5
 - openpyxl
 - PyQtWebEngine
@@ -131,7 +131,7 @@ python main.py
 
 ## 当前版本
 
-**v2.2.0**（2026-05-15）
+**v2.4.0**（2026-06-16）
 
 ## 依赖项
 

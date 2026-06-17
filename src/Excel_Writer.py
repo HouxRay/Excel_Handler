@@ -1,6 +1,5 @@
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
-from typing import List, Union
 from src.Excel_Info import GetWriteInfo
 from PyQt5.QtWidgets import QMessageBox, QApplication
 import sys
@@ -135,7 +134,7 @@ class ExcelWriter:
 
     def write_info(self, line_location: int,
                    column_location: int,
-                   value: Union[int, str, list, dict], # dict is testing
+                   value: int | str | list | dict, # dict is testing
                    cheak_empty: bool = False) -> None:
         """
         向 Excel 写入数据，如果目标单元格已有非空字符串则跳过

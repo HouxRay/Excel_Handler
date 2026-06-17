@@ -4,6 +4,70 @@
 
 ---
 
+## 2026-06-16 — Bug修复：打开窗口崩溃、JSON排序统计遗漏；功能升级：映射文件在线编辑 (v2.3.0 → v2.4.0)
+
+### Bug 修复
+
+**文件：** [window/table_qt.py](window/table_qt.py)
+
+**1. 第二次点击"打开"时程序静默退出 (CRITICAL)**
+- **根因：** `NewWindow.closeEvent` 中 `deleteLater()` 与 `WA_DeleteOnClose` 冲突，导致 `QWebEngineView` 被双重删除（父析构 + deleteLater 队列），引发 QtWebEngine 进程段错误
+- **修复：**
+  - HTML 模式：删除 `closeEvent` 中的 `self.web_view.deleteLater()`，子 widget 由 `WA_DeleteOnClose` 触发的父析构函数自动清理
+  - 图片模式：`_show_pic_txt_dialog` 创建的 `QDialog` 添加 `WA_DeleteOnClose`，防止关闭后 C++ 对象残留
+
+**2. JSON排序只统计最后一次写入 (CRITICAL)**
+- **根因：** 三个问题叠加：
+  - JSON 格式检测条件无法区分新旧格式（`{code→category} vs {category→code}`），旧格式数据被静默丢弃
+  - 条件导入 `if category in self.data_storage and code in ...` 丢弃当前 `data_storage` 中不存在的 code
+  - `sort()` 不调用 `save_changes()`，编辑未保存时只统计旧数据
+- **修复：**
+  - 格式检测改用 `re.match(r'\d{3}', first_key)` 判断顶层 key 是否为编号
+  - 条件导入放宽为 `category in data_storage` 时直接写入，不在时新建分类
+  - `sort()` 开头添加 `self.save_changes()` 确保编辑内容先写回
+
+### 功能升级
+
+**文件：** [window/settings_dialog.py](window/settings_dialog.py)
+
+- **映射文件在线编辑：** "映射设置"标签页新增"名称映射文件 (mapping_data.txt)"编辑表格
+  - 支持添加行、删除选中行、清空表格
+  - "应用"时自动将编辑内容写回 `mapping_data.txt` 文件
+  - 通过 `_reload_with_new_paths()` 自动重新加载，无需重启程序
+
+### 版本号
+
+- `v2.3.0` → `v2.4.0`（功能升级 + Bug 修复）
+
+---
+
+## 2026-05-18 — Python 3.10 环境升级、类型注解现代化 (v2.2.1 → v2.3.0)
+
+### 环境升级
+
+- **Python 3.8 → 3.10**：新建 conda 环境 `qt310`
+- 所有依赖重新安装（PyQt5、PyQtWebEngine、openpyxl、pypinyin、html2text、requests）
+
+### 语法升级
+
+**修改文件：** [src/Excel_Info.py](src/Excel_Info.py)、[src/Excel_Writer.py](src/Excel_Writer.py)、[src/File_Reader.py](src/File_Reader.py)、[src/Name_Matcher.py](src/Name_Matcher.py)、[ai/ai_extractor.py](ai/ai_extractor.py)
+
+- `Union[X, Y]` → `X | Y`（PEP 604 联合类型）
+- `List[X]` → `list[X]`、`Dict[X, Y]` → `dict[X, Y]`（PEP 585 内建泛型）
+- 移除所有 `from typing import Union, List, Dict` 导入
+
+### Bug 修复
+
+**文件：** [window/settings_dialog.py](window/settings_dialog.py)
+
+- `_read_table_to_dict` 中 `.strip()` 会删除空格键的键值 `" "`，导致空格映射在保存时丢失；改为 `.rstrip('\n\r')` 仅去除换行
+
+### 版本号
+
+- `v2.2.1` → `v2.3.0`（环境升级）
+
+---
+
 ## 2026-05-15 — Pic模式txt文件创建、映射关系可视化配置 (v2.1.3 → v2.2.0)
 
 ### 1. Pic模式 — 新建/编辑txt文件

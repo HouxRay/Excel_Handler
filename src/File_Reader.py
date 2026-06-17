@@ -1,6 +1,5 @@
 import os
 from pathlib import Path
-from typing import List, Union
 
 class FileReader:
     def __init__(self, recursive: bool = True, file_path: str = None):
@@ -12,7 +11,7 @@ class FileReader:
         self.recursive = recursive
         self.file_path = file_path
 
-    def get_all_files(self, target_path: Union[str, Path]) -> List[str]:
+    def get_all_files(self, target_path: str | Path) -> list[str]:
         """
         获取路径下所有文件
         :param target_path: 需要遍历的路径
@@ -60,7 +59,7 @@ class FileReader:
         return path.is_file() and path.suffix.lower() == '.html'
     
     @staticmethod
-    def extract_filename(file_path: Union[str, Path]) -> str:
+    def extract_filename(file_path: str | Path) -> str:
         """
         智能文件名提取方法
         示例输入：D:\ExcelHander\src\2025-03-03-竞彩\优选计划.html

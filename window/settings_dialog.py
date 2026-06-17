@@ -90,6 +90,24 @@ class SettingsDialog(QDialog):
         key_group_layout.addLayout(key_btn_layout)
         mapping_layout.addWidget(key_group)
 
+        # -- 名称映射文件表格 --
+        name_group = QGroupBox("名称映射文件 (mapping_data.txt)")
+        name_group_layout = QVBoxLayout(name_group)
+        self.name_mapping_table = QTableWidget()
+        self.name_mapping_table.setColumnCount(2)
+        self.name_mapping_table.setHorizontalHeaderLabels(["短名称", "全名称"])
+        self.name_mapping_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self._init_mapping_table(self.name_mapping_table)
+        name_btn_layout = self._build_table_buttons(
+            self.name_mapping_table,
+            lambda: self._add_table_row(self.name_mapping_table),
+            lambda: self._delete_selected_rows(self.name_mapping_table),
+            lambda: self._reset_name_mapping_table()
+        )
+        name_group_layout.addWidget(self.name_mapping_table)
+        name_group_layout.addLayout(name_btn_layout)
+        mapping_layout.addWidget(name_group)
+
         tabs.addTab(mapping_tab, "映射设置")
 
         main_layout.addWidget(tabs)
@@ -120,6 +138,7 @@ class SettingsDialog(QDialog):
         # 填充映射表格
         self._populate_table(self.match_table, get_match_dict())
         self._populate_table(self.keyboard_table, get_keyboard_mappings())
+        self._load_name_mapping_table()
 
     # ---- Path tab helpers ----
 
@@ -186,8 +205,12 @@ class SettingsDialog(QDialog):
         for row in range(table.rowCount()):
             key_item = table.item(row, 0)
             val_item = table.item(row, 1)
-            if key_item and key_item.text().strip():
-                result[key_item.text().strip()] = val_item.text().strip() if val_item else ""
+            if key_item and key_item.text():
+                key = key_item.text()
+                # 保留空格等有效空白字符，仅去除首尾换行
+                key = key.rstrip('\n\r')
+                if key:
+                    result[key] = val_item.text().rstrip('\n\r') if val_item else ""
         return result
 
     def _populate_table(self, table, data_dict: dict):
@@ -205,6 +228,41 @@ class SettingsDialog(QDialog):
     def _reset_keyboard_table(self):
         self._populate_table(self.keyboard_table, get_default_keyboard_mappings())
         self._mark_changed()
+
+    def _load_name_mapping_table(self):
+        """从 mapping_data.txt 加载名称映射到表格"""
+        mapping_path = self.mapping_edit.text()
+        mapping_dict = {}
+        if mapping_path and os.path.exists(mapping_path):
+            try:
+                with open(mapping_path, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and "：" in line:
+                            value, key = line.split("：", 1)
+                            mapping_dict[key.strip()] = value.strip()
+            except Exception:
+                pass  # 文件无法读取时使用空表格
+        self._populate_table(self.name_mapping_table, mapping_dict)
+
+    def _reset_name_mapping_table(self):
+        """重置名称映射表格为空（清空表格让用户手动输入）"""
+        self.name_mapping_table.setRowCount(0)
+        self._mark_changed()
+
+    def _save_name_mapping_table(self):
+        """将名称映射表格内容保存到 mapping_data.txt"""
+        mapping_path = self.mapping_edit.text()
+        if not mapping_path:
+            return
+        mapping_dict = self._read_table_to_dict(self.name_mapping_table)
+        try:
+            # 写入格式：短名称：全名称
+            with open(mapping_path, 'w', encoding='utf-8') as f:
+                for short_name, full_name in mapping_dict.items():
+                    f.write(f"{short_name}：{full_name}\n")
+        except Exception as e:
+            QMessageBox.warning(self, "错误", f"保存名称映射文件失败: {str(e)}")
 
     # ---- Common ----
 
@@ -270,6 +328,7 @@ class SettingsDialog(QDialog):
         # 映射设置
         save_match_dict(self._read_table_to_dict(self.match_table))
         save_keyboard_mappings(self._read_table_to_dict(self.keyboard_table))
+        self._save_name_mapping_table()
 
         self._changed = False
         self.accept()

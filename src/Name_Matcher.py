@@ -1,10 +1,9 @@
 import src.Excel_Handler as eh
 import src.File_Reader as fr
-from typing import Union, List, Dict
 from pathlib import Path
 
 class NameMatcher:
-    def __init__(self, file_path: Union[str, Path], excel_path: Union[str, Path], match_mode: str = "contains", sheet_name: str = None):
+    def __init__(self, file_path: str | Path, excel_path: str | Path, match_mode: str = "contains", sheet_name: str = None):
         """
         中文专用列表匹配器
         
@@ -20,7 +19,7 @@ class NameMatcher:
         self.match_mode = match_mode
         self._validate_mode()
 
-    def name_extractor(self) -> List[str]:
+    def name_extractor(self) -> list[str]:
         files_names = self.file_reader.extract_file(self.file_path)
         excel_first_columns = self.excel_handler.read_first_column()
         return files_names, excel_first_columns
@@ -31,7 +30,7 @@ class NameMatcher:
         if self.match_mode not in valid_modes:
             raise ValueError(f"无效匹配模式，可选：{valid_modes}")
 
-    def create_mapping(self, list1: List[str] = None, list2: List[str] = None) -> Dict[str, str]:
+    def create_mapping(self, list1: list[str] = None, list2: list[str] = None) -> dict[str, str]:
         """
         创建中文匹配字典
         """
@@ -53,7 +52,7 @@ class NameMatcher:
         
         return mapping
     
-    def create_mapping_v2(self, file_names: List[str] = None, pre_mapping: Dict[str, str] = None) -> Dict[str, str]:
+    def create_mapping_v2(self, file_names: list[str] = None, pre_mapping: dict[str, str] = None) -> dict[str, str]:
         """
         创建自定义匹配字典
         """
