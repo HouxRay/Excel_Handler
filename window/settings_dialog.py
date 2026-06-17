@@ -230,7 +230,11 @@ class SettingsDialog(QDialog):
         self._mark_changed()
 
     def _load_name_mapping_table(self):
-        """从 mapping_data.txt 加载名称映射到表格"""
+        """从 mapping_data.txt 加载名称映射到表格
+
+        文件格式：短名称：全名称
+        表格显示：Col0=短名称, Col1=全名称（与表头一致）
+        """
         mapping_path = self.mapping_edit.text()
         mapping_dict = {}
         if mapping_path and os.path.exists(mapping_path):
@@ -239,8 +243,8 @@ class SettingsDialog(QDialog):
                     for line in f:
                         line = line.strip()
                         if line and "：" in line:
-                            value, key = line.split("：", 1)
-                            mapping_dict[key.strip()] = value.strip()
+                            short_name, full_name = line.split("：", 1)
+                            mapping_dict[short_name.strip()] = full_name.strip()
             except Exception:
                 pass  # 文件无法读取时使用空表格
         self._populate_table(self.name_mapping_table, mapping_dict)
