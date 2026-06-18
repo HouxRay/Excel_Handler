@@ -20,7 +20,7 @@ class GetWriteInfo:
         self.sheet_name = sheet_name
         self.file_reader = File_Reader.FileReader(file_path = file_path)
         self.excel_handler = Excel_Handler.ExcelHandler(excel_path, sheet_name)
-        self.name_matcher = NameMatcher(file_path=file_path, excel_path=excel_path)
+        self.name_matcher = NameMatcher(file_path=file_path, excel_path=excel_path, sheet_name=sheet_name)
         self.file_path = Path(file_path)
         self.wb = load_workbook(filename=self.excel_path)
 

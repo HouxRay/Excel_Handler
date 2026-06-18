@@ -15,11 +15,14 @@ def run():
     if result != QDialog.Accepted:
         return  # 用户取消选择
     
-    folder_path, excel_path, json_path, sheet_name = path_selector.selected_paths
+    folder_path, excel_path, json_path, sheet_name, bd_folder = path_selector.selected_paths
 
     # 验证路径有效性
-    if not folder_path or not excel_path:
-        QMessageBox.critical(None, "错误", "必须选择有效的文件夹和Excel文件路径")
+    if not excel_path:
+        QMessageBox.critical(None, "错误", "必须选择有效的Excel文件路径")
+        return
+    if not folder_path and not bd_folder:
+        QMessageBox.critical(None, "错误", "必须选择 HTML 文件夹路径或北单文件夹路径")
         return
 
     # 保存路径到 QSettings 配置
@@ -31,18 +34,17 @@ def run():
     settings.setValue("paths/excel_path", excel_path)
     settings.setValue("paths/json_path", json_path)
     settings.setValue("paths/sheet_name", sheet_name)
-    
+    settings.setValue("paths/bd_folder_path", bd_folder or "")
+
     try:
         # 第二步：获取表格信息
-        # info_getter = GetWriteInfo(folder_path, excel_path)
-        # top_data = info_getter.get_tabel_info()
-        # files_names, excel_name = info_getter.get_file_and_excel_info()
-        
+
         # 第三步：显示主窗口
         main_window = EnhancedDataEditor(excel_path = excel_path,
                                          file_path = folder_path,
                                          json_path = json_path,
-                                         sheet_name = sheet_name)
+                                         sheet_name = sheet_name,
+                                         bd_file_path = bd_folder or "")
         main_window.show()
         
         sys.exit(app.exec_())

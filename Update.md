@@ -6,6 +6,44 @@
 
 ---
 
+## 2026-06-18 — BD（北单）模式正式接入；映射文件独立标签页；多 Bug 修复 (v2.4.1→v3.0.0)
+
+### 新功能：BD（北单）模式
+
+**文件：** [window/table_qt.py](window/table_qt.py)、[src/BD_Handler.py](src/BD_Handler.py)（新建）、[window/table_qt_2.py](window/table_qt_2.py)、[window/table_conbine.py](window/table_conbine.py)
+
+BD 模式作为继 HTML、图片后的第三种数据模式正式接入：
+
+- **路径选择器升级：** 新增"北单文件夹路径"输入，支持 BD 文件夹独立配置（与 HTML 文件夹互不依赖）
+- **三模式切换：** 主窗口顶部新增"北单"按钮，根据文件夹存在情况自动启用/禁用；BD-only 启动默认进入 BD 模式
+- **数据读取：** `BD_Handler.find_bd_columns()` 正则 `^(?:北单)?(\d+)$` 匹配 Excel 表头，兼容混合编号
+- **文件匹配：** 递归扫描 BD 文件夹，按 int 值关联 Excel 编号
+- **表格设计：** 6 列（序号/队伍/比分1~4），锚定 30 行，行号不可编辑
+- **数据存储：** `bd_data_storage[label] = {code, home, away, scores, html_file}`
+- **导出/排序/JSON：** 独立实现，不依赖 JC 模式逻辑
+- **"填入数据"按钮：** 当前 BD 模式隐藏（预留后续 AI 功能）
+
+### 启动性能优化
+
+**文件：** [src/Excel_Handler.py](src/Excel_Handler.py)
+
+- **`read_header_bases()` 加速：** 连续 2 个空 4 列块即停止扫描，避免读取 16224 列
+
+### Bug 修复
+
+1. **NameMatcher 未传 sheet_name (CRITICAL) —** 导致导出始终查空 sheet
+2. **BD→HTML 切换闪退 —** `self.mapping` 未初始化
+3. **JSON 加载 BD-only 闪退 —** `get_info` 为 None
+4. **BD 文件多层嵌套未找到 —** `os.listdir` → `glob.glob('**/*.html')`
+5. **BD 导出后行数坍缩 —** 锚定 30 行
+6. **`reload_paths` 解包错误 —** 4→5 元组未同步
+
+### 版本号
+
+- `v2.4.1` → `v3.0.0`（重大功能升级）
+
+---
+
 ## 2026-06-17 — 设置界面优化：映射文件独立标签页；BD文件外部测试 (v2.4.0 → v2.4.1)
 
 ### 功能优化

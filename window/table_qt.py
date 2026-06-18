@@ -11,11 +11,13 @@ from src.Excel_Info import GetWriteInfo
 from src.Excel_Writer import ExcelWriter, reload_match_dict
 from window.settings_dialog import SettingsDialog
 from src.mapping_manager import apply_keyboard_mappings, get_keyboard_mappings
+from src.BD_Handler import parse_bd_detail, find_bd_columns
 import time
 from pathlib import Path
 from collections import Counter, defaultdict
 import logging
 import os
+import glob
 from datetime import datetime, timezone, timedelta
 
 # 自定义日志处理器，用于将日志输出到GUI窗口
@@ -227,13 +229,14 @@ class SpaceToZeroDelegate(QStyledItemDelegate):
 
 
 class EnhancedDataEditor(QMainWindow):
-    def __init__(self, top_data:list = None, 
-                 left_items:list = None, 
-                 excel_name:list = None, 
-                 excel_path:str = None, 
+    def __init__(self, top_data:list = None,
+                 left_items:list = None,
+                 excel_name:list = None,
+                 excel_path:str = None,
                  file_path:str = None,
                  json_path:str = None,
-                 sheet_name:str = None):
+                 sheet_name:str = None,
+                 bd_file_path:str = None):
         """
         top_data：队伍数据
         left_items：html文件名称
@@ -242,6 +245,7 @@ class EnhancedDataEditor(QMainWindow):
         file_path：html文件路径
         json_path：json文件路径（用于二次整理时引入新数据）
         sheet_name：Excel sheet名称
+        bd_file_path：北单HTML文件夹路径
         """
         super().__init__()
         self.setWindowTitle("Doro统治世界")
@@ -258,11 +262,21 @@ class EnhancedDataEditor(QMainWindow):
             logger.exception("设置窗口图标时发生错误")
         
         if top_data is None or left_items is None or excel_name is None:
-            self.get_info = GetWriteInfo(file_path, excel_path, sheet_name)
-            top_data = self.get_info.get_tabel_info()
-            left_items, excel_name = self.get_info.get_file_and_excel_info()
+            if file_path:
+                self.get_info = GetWriteInfo(file_path, excel_path, sheet_name)
+                top_data = self.get_info.get_tabel_info()
+                left_items, excel_name = self.get_info.get_file_and_excel_info()
+            else:
+                # 仅 BD 模式启动，无 HTML 文件夹
+                self.get_info = None
+                top_data = None
+                left_items = []
+                excel_name = {}
         self.file_path = file_path  # 存储文件夹路径，供图片模式查找txt文件
         self.sheet_name = sheet_name  # 存储sheet名，供后台线程使用
+        self.excel_path = excel_path  # 存储Excel路径，供BD模式导出使用
+        self.bd_file_path = bd_file_path or ""  # 北单HTML文件夹路径
+        self.mapping = {}  # 先初始化空字典，HTML模式下才实际填充
 
         # 从 QSettings 加载持久化的 MATCH_DICT（有则用，无则默认）
         reload_match_dict()
@@ -302,14 +316,23 @@ class EnhancedDataEditor(QMainWindow):
                            for item in self.left_items}
         
         # 从JSON文件加载数据（用于二次整理时引入新数据）
+        self._bd_json_restore = None
         if json_path:
             try:
-                json_data = self.get_info.get_json(json_path)
+                if self.get_info is not None:
+                    json_data = self.get_info.get_json(json_path)
+                else:
+                    import json
+                    with open(json_path, 'r', encoding='utf-8') as f:
+                        json_data = json.load(f)
                 if json_data and isinstance(json_data, dict):
-                    # 检测格式：新格式顶层为code（3位数字），旧格式顶层为category（中文）
                     first_key = next(iter(json_data))
                     first_val = json_data[first_key]
-                    if isinstance(first_val, dict) and re.match(r'\d{3}', str(first_key)):
+                    # 检测 BD 格式：{label: {code, home, away, scores}}
+                    if isinstance(first_val, dict) and "code" in first_val and "scores" in first_val:
+                        self._bd_json_restore = json_data
+                        logger.info(f"JSON 识别为 BD 格式: {len(json_data)} 场比赛")
+                    elif isinstance(first_val, dict) and re.match(r'\d{3}', str(first_key)):
                         # 新格式：{code: {category: [scores]}}
                         imported_count = 0
                         for code, categories in json_data.items():
@@ -318,7 +341,6 @@ class EnhancedDataEditor(QMainWindow):
                                     self.data_storage[category][code] = scores
                                     imported_count += 1
                                 else:
-                                    # category 不在当前映射中，添加新条目
                                     self.data_storage[category] = {code: scores}
                                     imported_count += 1
                         logger.info(f"成功从JSON文件加载数据: {imported_count} 项")
@@ -333,8 +355,20 @@ class EnhancedDataEditor(QMainWindow):
         self.current_window = None
         self.is_dirty = False          # 未保存修改标记
         self.worker_thread = None      # 后台工作线程引用
-        self.data_mode = 'html'        # 数据来源：'html' 或 'pic'
+
+        # 确定各模式可用性（哪个文件夹为空，对应模式不可选）
+        self._has_html_folder = bool(self.file_path)
+        self._has_bd_folder = bool(self.bd_file_path)
+
+        # 默认模式选择
+        if not self._has_html_folder and self._has_bd_folder:
+            self.data_mode = 'bd'       # 仅有 BD → BD 模式
+        else:
+            self.data_mode = 'html'     # 有 HTML 或两者都有 → HTML 模式
+
         self._load_pic_config()        # 加载图片模式配置
+        self.bd_categories = []        # BD 模式数据（延迟加载）
+        self.bd_data_storage = {}
         self.init_ui()
         
     def init_ui(self):
@@ -356,12 +390,19 @@ class EnhancedDataEditor(QMainWindow):
         """
         self.html_mode_btn = QPushButton("HTML")
         self.pic_mode_btn = QPushButton("图片")
+        self.bd_mode_btn = QPushButton("北单")
         self.html_mode_btn.setStyleSheet(active_style)
         self.pic_mode_btn.setStyleSheet(inactive_style)
+        self.bd_mode_btn.setStyleSheet(inactive_style)
         self.html_mode_btn.clicked.connect(lambda: self._switch_data_mode('html'))
         self.pic_mode_btn.clicked.connect(lambda: self._switch_data_mode('pic'))
+        self.bd_mode_btn.clicked.connect(lambda: self._switch_data_mode('bd'))
+        # 根据文件夹情况禁用不可用的模式按钮
+        self.html_mode_btn.setEnabled(self._has_html_folder)
+        self.bd_mode_btn.setEnabled(self._has_bd_folder)
         mode_layout.addWidget(self.html_mode_btn)
         mode_layout.addWidget(self.pic_mode_btn)
+        mode_layout.addWidget(self.bd_mode_btn)
         left_panel.addLayout(mode_layout)
 
         # 左侧滚动区域
@@ -542,7 +583,7 @@ class EnhancedDataEditor(QMainWindow):
         right_layout.addWidget(self.log_output)  # 添加到右侧布局
 
         # 版本号标签（不起眼的右下角）
-        version_label = QLabel("v2.4.1")
+        version_label = QLabel("v3.0.0")
         version_label.setStyleSheet("color: #999; font-size: 10px; padding: 2px;")
         version_label.setAlignment(Qt.AlignRight | Qt.AlignBottom)
         right_layout.addWidget(version_label)
@@ -575,9 +616,91 @@ class EnhancedDataEditor(QMainWindow):
                 # 将图片类别追加到 data_storage
                 for pic_cat in self.pic_categories:
                     if pic_cat not in self.data_storage:
-                        self.data_storage[pic_cat] = {row[0]: list(row[2:]) for row in self.top_data}
+                        if self.flag:
+                            # 有真实数据时使用 Excel 数据
+                            self.data_storage[pic_cat] = {row[0]: list(row[2:]) for row in self.top_data}
+                        else:
+                            # 无真实数据（BD-only）时用空数据
+                            self.data_storage[pic_cat] = {}
         except Exception:
             pass
+
+    def _load_bd_config(self):
+        """加载北单模式配置 — 从当前选择的 Excel 和 HTML 目录扫描"""
+        self.bd_categories = []
+        self.bd_data_storage = {}
+        try:
+            excel_path = self.excel_path if hasattr(self, 'excel_path') and self.excel_path else ""
+            html_dir = self.bd_file_path or self.file_path or ""
+            logger.info(f"BD 加载: Excel = {excel_path}, BD HTML = {html_dir}")
+            if not excel_path or not os.path.exists(excel_path):
+                return
+            from openpyxl import load_workbook
+            wb = load_workbook(excel_path, read_only=True)
+            sheet_name = self.sheet_name if hasattr(self, 'sheet_name') and self.sheet_name else ""
+            if sheet_name and sheet_name in wb.sheetnames:
+                ws = wb[sheet_name]
+            else:
+                ws = wb.active
+            col_map = find_bd_columns(ws)
+            if not col_map:
+                wb.close()
+                logger.warning(f"BD Excel 未找到比赛编号 (row1 cols 2-{ws.max_column})")
+                return
+
+            # 2. 递归扫描 BD HTML 目录，用正则提取文件名中的北单号
+            available = {}  # {北单号(纯数字): 文件路径}
+            if html_dir and os.path.isdir(html_dir):
+                for fpath in glob.glob(os.path.join(html_dir, '**', '*.html'), recursive=True):
+                    fname = os.path.basename(fpath)
+                    if fname == 'A数量.html':
+                        continue
+                    m = re.search(r'北单(\d+)', fname)
+                    if m:
+                        num = m.group(1)
+                        if num not in available:
+                            available[num] = fpath
+
+            # 3. 按 Excel 列顺序构建列表
+            sorted_codes = sorted(col_map.keys(),
+                                  key=lambda x: int(x) if x.isdigit() else 999)
+            for code_str in sorted_codes:
+                info = col_map[code_str]
+                home, away = info["teams"]
+                label = f"北单{code_str} {home} VS {away}" if home else f"北单{code_str}"
+
+                # 用 int 比较匹配文件（01 匹配 1，北单1 匹配 北单01）
+                match_file = None
+                code_int = int(code_str)
+                for fnum, fpath in available.items():
+                    if int(fnum) == code_int:
+                        match_file = fpath
+                        break
+
+                self.bd_categories.append(label)
+                self.bd_data_storage[label] = {
+                    "code": code_str,
+                    "home": home,
+                    "away": away,
+                    "scores": [],
+                    "html_file": match_file,
+                }
+            wb.close()
+
+            # 4. 从 JSON 恢复 BD 数据（_bd_json_restore 在 __init__ 中设置）
+            if self._bd_json_restore:
+                restored = 0
+                for label, info in self._bd_json_restore.items():
+                    if label in self.bd_data_storage:
+                        self.bd_data_storage[label]["scores"] = info.get("scores", [])
+                        restored += 1
+                if restored:
+                    logger.info(f"BD 从 JSON 恢复 {restored} 场比赛数据")
+
+            logger.info(f"BD 加载: {len(self.bd_categories)} 个比赛"
+                        f" ({sum(1 for v in self.bd_data_storage.values() if v['html_file'])} 个匹配文件)")
+        except Exception as e:
+            logger.exception("BD 配置加载失败")
 
     def _rebuild_radio_buttons(self):
         """根据当前 data_mode 重建左侧单选按钮列表"""
@@ -594,15 +717,22 @@ class EnhancedDataEditor(QMainWindow):
                     child.widget().deleteLater()
 
         # 选择对应的列表
-        items = self.left_items if self.data_mode == 'html' else self.pic_categories
-        mapping = self.mapping if self.data_mode == 'html' else self.pic_mapping
+        if self.data_mode == 'bd':
+            items = self.bd_categories
+            mapping = {}
+        elif self.data_mode == 'pic':
+            items = self.pic_categories
+            mapping = self.pic_mapping
+        else:
+            items = self.left_items
+            mapping = self.mapping
 
         for idx, item in enumerate(items):
             radio = QRadioButton(item)
             if item in mapping:
                 radio.setStyleSheet("color: green;")
             else:
-                radio.setStyleSheet("color: red;")
+                radio.setStyleSheet("color: black;" if self.data_mode == 'bd' else "color: red;")
             self.radio_group.addButton(radio, idx)
             container.layout().addWidget(radio)
             if idx == 0:
@@ -612,7 +742,24 @@ class EnhancedDataEditor(QMainWindow):
         """切换数据来源模式"""
         if self.data_mode == mode:
             return
+        if mode == 'html' and not self._has_html_folder:
+            QMessageBox.warning(self, "警告", "未设置 HTML 文件夹路径，无法切换到 HTML 模式")
+            return
+        if mode == 'pic' and not self.pic_categories:
+            QMessageBox.warning(self, "警告", "未加载图片模式配置，无法切换")
+            return
+
+        if mode == 'bd' and not self._has_bd_folder:
+            QMessageBox.warning(self, "警告", "未设置北单文件夹路径，无法切换到北单模式")
+            return
+
         self.data_mode = mode
+
+        if mode == 'bd':
+            self._load_bd_config()
+        elif mode == 'html':
+            self._rebuild_radio_buttons()
+
         # 更新按钮样式
         active = """
             QPushButton { background-color: #2196F3; color: white; font-weight: bold;
@@ -624,21 +771,29 @@ class EnhancedDataEditor(QMainWindow):
         """
         self.html_mode_btn.setStyleSheet(active if mode == 'html' else inactive)
         self.pic_mode_btn.setStyleSheet(active if mode == 'pic' else inactive)
+        self.bd_mode_btn.setStyleSheet(active if mode == 'bd' else inactive)
         # 重建单选按钮
         self._rebuild_radio_buttons()
-        # 显示/隐藏填入按钮
+        # "填入数据" 仅对图片模式开放（BD 后续加入AI功能后再启用）
         self.fill_btn.setVisible(mode == 'pic')
         # 刷新表格
         self.refresh_table()
 
     def _on_fill_from_txt(self):
-        """图片模式：从txt文件自动解析并填入数据到表格"""
+        """填入数据：图片模式从txt，BD模式从HTML详情文件解析比分"""
         selected_item = self.radio_group.checkedButton().text()
-        if not self.file_path:
+
+        if self.data_mode == 'bd':
+            self._fill_bd_from_html(selected_item)
+            return
+
+        # 图片模式（原有逻辑）
+        txt_dir = self.file_path or self.bd_file_path
+        if not txt_dir:
             QMessageBox.warning(self, "警告", "未设置文件夹路径")
             return
 
-        txt_path = os.path.join(self.file_path, f"{selected_item}.txt")
+        txt_path = os.path.join(txt_dir, f"{selected_item}.txt")
         if not os.path.exists(txt_path):
             QMessageBox.warning(self, "警告", f"未找到文件: {txt_path}")
             return
@@ -681,32 +836,95 @@ class EnhancedDataEditor(QMainWindow):
         except Exception as e:
             QMessageBox.warning(self, "警告", f"读取失败: {str(e)}")
 
+    def _fill_bd_from_html(self, selected_item):
+        """BD 模式：从北单N.html 详情文件中解析比分并填入"""
+        bd_info = self.bd_data_storage.get(selected_item, {})
+        code = bd_info.get("code", "")
+        html_dir = self.bd_file_path or self.file_path
+        if not html_dir or not os.path.isdir(html_dir):
+            QMessageBox.warning(self, "警告", "未设置北单文件夹路径")
+            return
+
+        detail_scores = parse_bd_detail(html_dir)
+        if code in detail_scores:
+            raw = detail_scores[code]
+            # 严格过滤：排除赔率/盘口噪声（如 6-17, 3-15, 12-4）
+            # 足球单边比分 ≤ 7，超过此值视为非比分数据
+            filtered = []
+            for a, b in raw:
+                try:
+                    ia, ib = int(a), int(b)
+                    if ia <= 7 and ib <= 7:
+                        filtered.append([a, b])
+                except ValueError:
+                    continue
+            bd_info["scores"] = filtered
+            self.refresh_table()
+            self.logger.info(f"BD 填入数据: {selected_item} → {len(raw)}组原始, {len(filtered)}组有效")
+            self.log_output.append(f"已从 北单{code}.html 填入 {len(filtered)} 组比分")
+        else:
+            QMessageBox.warning(self, "警告", f"未从文件中提取到比分数据")
+
     def refresh_table(self):
-        """
-        刷新表格
-        """
+        """刷新表格"""
         try:
-            selected_item = self.radio_group.checkedButton().text()
+            btn = self.radio_group.checkedButton()
+            if btn is None:
+                self.table.setRowCount(0)
+                return
+            selected_item = btn.text()
+
+            if self.data_mode == 'bd':
+                self._refresh_table_bd(selected_item)
+                return
+
             current_data = self.data_storage[selected_item]
 
             self.table.setRowCount(len(current_data))
             for row_idx, (code, values) in enumerate(current_data.items()):
                 # 编号
                 item = QTableWidgetItem(code)
-                item.setFlags(item.flags() & ~Qt.ItemIsEditable)  # 设置为不可编辑
+                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
                 self.table.setItem(row_idx, 0, item)
-                
+
                 # 固定值
                 item = QTableWidgetItem(self.fixed_values[code])
-                item.setFlags(item.flags() & ~Qt.ItemIsEditable)  # 设置为不可编辑
+                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
                 self.table.setItem(row_idx, 1, item)
-                
+
                 # 可编辑字段
                 for col_idx, value in enumerate(values, start=2):
                     self.table.setItem(row_idx, col_idx, QTableWidgetItem(value))
         except Exception as e:
             logger.exception("刷新表格时发生错误")
             QMessageBox.warning(self, "警告", f"{e}")
+
+    def _refresh_table_bd(self, selected_item):
+        """BD 模式表格刷新 — 行=预测实例，列=比分槽位"""
+        bd_info = self.bd_data_storage.get(selected_item, {})
+        scores = bd_info.get("scores", [])
+        home = bd_info.get("home", "")
+        away = bd_info.get("away", "")
+
+        # 至少显示 30 行，不足则补空行
+        min_rows = 30
+        display_scores = list(scores) if scores else []
+        if len(display_scores) < min_rows:
+            display_scores += [["", "", "", ""] for _ in range(min_rows - len(display_scores))]
+        self.table.setRowCount(len(display_scores))
+
+        for row_idx, score_set in enumerate(display_scores):
+            item = QTableWidgetItem(str(row_idx + 1))
+            item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+            self.table.setItem(row_idx, 0, item)
+
+            team_str = f"{home} VS {away}" if home else selected_item
+            item = QTableWidgetItem(team_str)
+            item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+            self.table.setItem(row_idx, 1, item)
+
+            for col_idx, val in enumerate(score_set[:4], start=2):
+                self.table.setItem(row_idx, col_idx, QTableWidgetItem(val))
                 
     def save_changes(self):
         """
@@ -717,7 +935,26 @@ class EnhancedDataEditor(QMainWindow):
             for row in range(self.table.rowCount()):
                 code = self.table.item(row, 0).text()
                 new_values = [apply_keyboard_mappings(self.table.item(row, col).text()) for col in range(2, 6)]
-                self.data_storage[selected_item][code] = new_values
+                if self.data_mode == 'bd':
+                    # BD: 全量重建 scores，清掉旧数据避免 HTML 噪声残留
+                    if selected_item not in self.bd_data_storage:
+                        bd_info = self.bd_data_storage.get(selected_item, {})
+                        self.bd_data_storage[selected_item] = {
+                            "code": bd_info.get("code", ""),
+                            "home": bd_info.get("home", ""),
+                            "away": bd_info.get("away", ""),
+                            "scores": [],
+                        }
+                    new_scores = []
+                    for r in range(self.table.rowCount()):
+                        vals = [apply_keyboard_mappings(self.table.item(r, c).text())
+                                for c in range(2, 6)]
+                        if any(v.strip() for v in vals):
+                            new_scores.append(vals)
+                    self.bd_data_storage[selected_item]["scores"] = new_scores
+                    break  # BD 模式一次性重建，不逐行循环
+                else:
+                    self.data_storage[selected_item][code] = new_values
             self.is_dirty = True
         except Exception as e:
             logger.exception("保存数据时发生错误")
@@ -742,7 +979,10 @@ class EnhancedDataEditor(QMainWindow):
                     if item is not None:
                         item.setText("")
             # 清空 data_storage 中对应的数据
-            if selected_item in self.data_storage:
+            if self.data_mode == 'bd':
+                if selected_item in self.bd_data_storage:
+                    self.bd_data_storage[selected_item]["scores"] = []
+            elif selected_item in self.data_storage:
                 for code in self.data_storage[selected_item]:
                     self.data_storage[selected_item][code] = ['', '', '', '']
                 self.is_dirty = True
@@ -770,6 +1010,28 @@ class EnhancedDataEditor(QMainWindow):
 
         if self.data_mode == 'pic':
             self._show_pic_txt_dialog(selected_item)
+        elif self.data_mode == 'bd':
+            # BD 模式：从北单专用目录查找北单N.html
+            bd_info = self.bd_data_storage.get(selected_item, {})
+            code = bd_info.get("code", "")
+            bd_dir = self.bd_file_path or self.file_path
+            found = None
+            if bd_dir and os.path.isdir(bd_dir):
+                code_int = int(code)
+                for fpath in glob.glob(os.path.join(bd_dir, '**', '*.html'), recursive=True):
+                    fname = os.path.basename(fpath)
+                    if fname == 'A数量.html':
+                        continue
+                    m = re.search(r'北单(\d+)', fname)
+                    if m and int(m.group(1)) == code_int:
+                        found = fpath
+                        break
+            if found:
+                self.current_window = NewWindow(selected_item, html_base_path=found, parent=self)
+                self.current_window.destroyed.connect(self._on_child_window_destroyed)
+                self.current_window.show()
+            else:
+                QMessageBox.warning(self, "警告", f"未找到比赛文件: 北单{code}")
         else:
             # HTML模式：原有逻辑
             try:
@@ -784,11 +1046,12 @@ class EnhancedDataEditor(QMainWindow):
 
     def _show_pic_txt_dialog(self, selected_item):
         """Pic模式：可编辑的txt对话框，文件不存在时保存即创建"""
-        if not self.file_path:
-            QMessageBox.warning(self, "警告", "未设置文件夹路径")
+        txt_dir = self.file_path or self.bd_file_path
+        if not txt_dir:
+            QMessageBox.warning(self, "警告", "未设置文件夹路径，请在路径选择器中设置 HTML 或北单文件夹")
             return
 
-        txt_path = os.path.join(self.file_path, f"{selected_item}.txt")
+        txt_path = os.path.join(txt_dir, f"{selected_item}.txt")
 
         # 读取已有内容（不存在则为空）
         content = ""
@@ -843,6 +1106,12 @@ class EnhancedDataEditor(QMainWindow):
         """
         self.save_changes()
         selected_item = self.radio_group.checkedButton().text()
+
+        # BD 模式：专用导出路径
+        if self.data_mode == 'bd':
+            self._export_bd(selected_item)
+            return
+
         is_pic = (self.data_mode == 'pic' and selected_item in self.pic_categories)
 
         try:
@@ -913,6 +1182,62 @@ class EnhancedDataEditor(QMainWindow):
         # 第二阶段：后台线程写入
         self._run_write_worker(write_ops, f"导出 {selected_item}")
 
+    def _export_bd(self, selected_item):
+        """BD 模式导出 — 纵向追加写入，无需映射/MATCH_DICT"""
+        bd_info = self.bd_data_storage.get(selected_item, {})
+        scores = bd_info.get("scores", [])
+        code = bd_info.get("code", "")
+        if not scores or not code:
+            QMessageBox.warning(self, "警告", "无数据可导出")
+            return
+
+        # 验证每个比分是否为 2 位数
+        invalid_items = []
+        for i, score_set in enumerate(scores):
+            for col_idx, s in enumerate(score_set[:4]):
+                s = str(s).strip()
+                if s and not re.fullmatch(r'\d{2}', s):
+                    invalid_items.append(f"第{i+1}行第{col_idx+1}列: \"{s}\"")
+
+        if invalid_items:
+            detail = "\n".join(invalid_items[:20])
+            if len(invalid_items) > 20:
+                detail += f"\n... 还有 {len(invalid_items) - 20} 条"
+            reply = QMessageBox.question(
+                self, '验证失败',
+                f"以下数据不是有效的 2 位比分，是否跳过并继续写入？\n\n{detail}",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+            )
+            if reply == QMessageBox.No:
+                return
+
+        excel_path = self.excel_path if hasattr(self, 'excel_path') and self.excel_path else ""
+        if not excel_path:
+            QMessageBox.warning(self, "警告", "未设置 BD Excel 路径，请先配置")
+            return
+        sheet = self.sheet_name if hasattr(self, 'sheet_name') else None
+        writer = ExcelWriter(excel_path, sheet)
+        col_map = find_bd_columns(writer.ws)
+        if code not in col_map:
+            QMessageBox.warning(self, "错误", f"Excel 中未找到编号 {code} 的列")
+            return
+
+        sc = col_map[code]["start_col"]
+        row = 2
+        while row <= writer.ws.max_row:
+            if writer.ws.cell(row=row, column=sc).value in (None, ""):
+                break
+            row += 1
+
+        for score_set in scores:
+            normalized = [apply_keyboard_mappings(str(s)) for s in score_set[:4]]
+            writer.batch_write_list(row, sc, normalized)
+            row += 1
+
+        writer.save()
+        self.is_dirty = False
+        self.logger.info(f"BD 导出完成: {selected_item} → {len(scores)} 行")
+
     def _run_write_worker(self, write_ops, task_name):
         """启动后台写入线程，不阻塞UI"""
         # 等待上一个线程完全结束
@@ -980,19 +1305,20 @@ class EnhancedDataEditor(QMainWindow):
             QMessageBox.critical(self, "错误", message)
     
     def sort(self):
-        """
-        排序 - 内存统计在主线程，写入在后台线程
-        """
+        """排序 - 内存统计在主线程，写入在后台线程。BD 模式使用专用排序路径。"""
         try:
-            # 先保存当前表格编辑内容到 data_storage
             self.save_changes()
+
+            if self.data_mode == 'bd':
+                self._sort_bd()
+                return
 
             stats = defaultdict(Counter)
             logger.info("开始排序")
 
             for name in self.data_storage:
                 if name in self.pic_categories:
-                    continue  # 图片模式数据不参与排序统计
+                    continue
                 number_dict = self.data_storage[name]
                 for number, values in number_dict.items():
                     for value in values:
@@ -1001,7 +1327,6 @@ class EnhancedDataEditor(QMainWindow):
 
             dict_counter = {number: dict(counts.most_common()) for number, counts in stats.items()}
 
-            # 收集写入操作（主线程）
             write_ops = []
             for column, contents in dict_counter.items():
                 try:
@@ -1020,16 +1345,82 @@ class EnhancedDataEditor(QMainWindow):
             QMessageBox.critical(self, "错误", f"排序失败：{str(e)}")
             return None
 
+    def _sort_bd(self):
+        """BD 排序 — 统计 bd_data_storage 中比分频率，纵向写入 Excel row 84"""
+        stats = defaultdict(Counter)
+        skipped_count = 0
+        for name, bd_info in self.bd_data_storage.items():
+            for score_set in bd_info.get("scores", []):
+                # 跳过全空行
+                if not any(str(v).strip() for v in score_set):
+                    continue
+                for value in score_set:
+                    value = str(value).strip()
+                    if not re.fullmatch(r'\d{2}', value):
+                        if value:
+                            skipped_count += 1
+                        continue
+                    try:
+                        iv = int(value)
+                        if iv <= 50:
+                            stats[bd_info["code"]][value] += 1
+                        else:
+                            skipped_count += 1
+                    except ValueError:
+                        skipped_count += 1
+
+        if skipped_count:
+            logger.warning(f"BD 排序跳过 {skipped_count} 个无效或非比分值")
+            QMessageBox.information(self, "排序提示",
+                                    f"排序完成，共跳过 {skipped_count} 个无效或非比分数据。")
+
+        dict_counter = {number: dict(counts.most_common()) for number, counts in stats.items()}
+
+        excel_path = self.excel_path if hasattr(self, 'excel_path') and self.excel_path else ""
+        if not excel_path:
+            QMessageBox.warning(self, "警告", "未设置 BD Excel 路径，请先配置")
+            return
+        sheet = self.sheet_name if hasattr(self, 'sheet_name') else None
+        writer = ExcelWriter(excel_path, sheet)
+        col_map = find_bd_columns(writer.ws)
+        for code_num, info in col_map.items():
+            contents = dict_counter.get(code_num, {})
+            if contents:
+                sc = info["start_col"]
+                writer.batch_write_cell(83, sc, f"BD{code_num}统计")
+                writer.batch_write_dict(84, sc, contents)
+
+        writer.save()
+        self.is_dirty = False
+        logger.info("BD 排序完成")
+        return dict_counter
+
     def export_json(self):
-        """
-        导出JSON文件 - 按比赛编号组织，便于跨sheet复用
-        格式: {code: {category: [scores]}}
-        """
+        """导出JSON文件 - BD模式单独保存"""
         try:
             import json
             if not os.path.exists("./json"):
                 os.makedirs("./json")
 
+            if self.data_mode == 'bd':
+                json_path = f"./json/bd_{datetime.now().strftime('%Y-%m-%d')}.json"
+                # BD 格式：{code: {home, away, scores: [[...]]}}
+                export_data = {}
+                for label, info in self.bd_data_storage.items():
+                    if info.get("scores"):
+                        export_data[label] = {
+                            "code": info["code"],
+                            "home": info["home"],
+                            "away": info["away"],
+                            "scores": info["scores"],
+                        }
+                with open(json_path, 'w', encoding='utf-8') as f:
+                    json.dump(export_data, f, ensure_ascii=False, indent=4)
+                logger.info(f"BD JSON 导出成功: {json_path} ({len(export_data)} 场比赛)")
+                self.is_dirty = False
+                return
+
+            # JC/HTML 模式（原有逻辑）
             # 转置为 code→category→scores 格式
             new_json_data = {}
             for category, codes in self.data_storage.items():
@@ -1081,11 +1472,14 @@ class EnhancedDataEditor(QMainWindow):
             result = path_selector.exec_()
             
             if result == QDialog.Accepted:
-                folder_path, excel_path, json_path, sheet_name = path_selector.selected_paths
-                
+                folder_path, excel_path, json_path, sheet_name, bd_folder = path_selector.selected_paths
+
                 # 验证路径有效性
-                if not folder_path or not excel_path or not sheet_name:
-                    QMessageBox.critical(None, "错误", "必须选择有效的文件夹、Excel文件和sheet")
+                if not excel_path or not sheet_name:
+                    QMessageBox.critical(None, "错误", "必须选择有效的Excel文件和sheet")
+                    return
+                if not folder_path and not bd_folder:
+                    QMessageBox.critical(None, "错误", "必须选择 HTML 文件夹或北单文件夹")
                     return
 
                 # 保存到 QSettings
@@ -1096,12 +1490,14 @@ class EnhancedDataEditor(QMainWindow):
                 settings.setValue("paths/excel_path", excel_path)
                 settings.setValue("paths/json_path", json_path)
                 settings.setValue("paths/sheet_name", sheet_name)
+                settings.setValue("paths/bd_folder_path", bd_folder or "")
 
                 # 创建新的主窗口实例
                 new_window = EnhancedDataEditor(excel_path=excel_path,
                                                file_path=folder_path,
                                                json_path=json_path,
-                                               sheet_name=sheet_name)
+                                               sheet_name=sheet_name,
+                                               bd_file_path=bd_folder or "")
                 new_window.show()
 
         except Exception as e:

@@ -49,7 +49,7 @@ logger = setup_logger()
 class PathSelector(QDialog):
     def __init__(self):
         super().__init__()
-        self.selected_paths = (None, None, None, None)  # 初始化路径存储 (folder, file, json, sheet)
+        self.selected_paths = (None, None, None, None, None)  # (folder, file, json, sheet, bd_folder)
         self.sheet_names = []
         self.initUI()
 
@@ -85,6 +85,12 @@ class PathSelector(QDialog):
         self.json_btn = QPushButton('浏览...')
         self.json_btn.clicked.connect(self.select_json)
 
+        # 北单文件夹路径选择组件
+        self.bd_folder_label = QLabel('北单文件夹路径:')
+        self.bd_folder_line = QLineEdit()
+        self.bd_folder_btn = QPushButton('浏览...')
+        self.bd_folder_btn.clicked.connect(self.select_bd_folder)
+
         # Sheet选择组件
         self.sheet_label = QLabel('选择Sheet:')
         self.sheet_combo = QComboBox()
@@ -110,6 +116,11 @@ class PathSelector(QDialog):
         json_layout.addWidget(self.json_line)
         json_layout.addWidget(self.json_btn)
 
+        bd_layout = QHBoxLayout()
+        bd_layout.addWidget(self.bd_folder_label)
+        bd_layout.addWidget(self.bd_folder_line)
+        bd_layout.addWidget(self.bd_folder_btn)
+
         sheet_layout = QHBoxLayout()
         sheet_layout.addWidget(self.sheet_label)
         sheet_layout.addWidget(self.sheet_combo)
@@ -118,6 +129,7 @@ class PathSelector(QDialog):
         main_layout.addLayout(folder_layout)
         main_layout.addLayout(file_layout)
         main_layout.addLayout(json_layout)
+        main_layout.addLayout(bd_layout)
         main_layout.addLayout(sheet_layout)
         main_layout.addWidget(self.confirm_btn)
 
@@ -161,26 +173,37 @@ class PathSelector(QDialog):
             self.sheet_combo.setEnabled(False)
 
     def select_json(self):
-        file, _ = QFileDialog.getOpenFileName(self, '选择JSON文件', 
+        file, _ = QFileDialog.getOpenFileName(self, '选择JSON文件',
                                             filter='JSON Files (*.json)')
         if file:
             self.json_line.setText(file)
+
+    def select_bd_folder(self):
+        folder = QFileDialog.getExistingDirectory(self, '选择北单文件夹')
+        if folder:
+            self.bd_folder_line.setText(folder)
 
     def on_confirm(self):
         folder_path = self.folder_line.text()
         file_path = self.file_line.text()
         json_path = self.json_line.text()
+        bd_folder = self.bd_folder_line.text()
         selected_sheet = self.sheet_combo.currentText() if self.sheet_combo.isEnabled() else None
-        
-        if not folder_path or not file_path:
-            QMessageBox.warning(self, "警告", "必须选择文件夹和Excel文件")
+
+        if not file_path:
+            QMessageBox.warning(self, "警告", "必须选择Excel文件")
             return
-        
+
+        # 至少选择一个文件夹（HTML 或 北单）
+        if not folder_path and not bd_folder:
+            QMessageBox.warning(self, "警告", "请至少选择 HTML 文件夹路径或北单文件夹路径")
+            return
+
         if not selected_sheet:
             QMessageBox.warning(self, "警告", "请选择Excel sheet！")
             return
-            
-        self.selected_paths = (folder_path, file_path, json_path, selected_sheet)
+
+        self.selected_paths = (folder_path, file_path, json_path, selected_sheet, bd_folder)
         self.accept()  # 使用accept()关闭对话框
 
     def _load_from_settings(self):
@@ -189,6 +212,7 @@ class PathSelector(QDialog):
         folder = settings.value("paths/html_folder_path", "")
         excel = settings.value("paths/excel_path", "")
         json_p = settings.value("paths/json_path", "")
+        bd_folder = settings.value("paths/bd_folder_path", "")
         if folder and os.path.exists(folder):
             self.folder_line.setText(folder)
         if excel and os.path.exists(excel):
@@ -196,6 +220,8 @@ class PathSelector(QDialog):
             self.load_sheet_names(excel)
         if json_p and os.path.exists(json_p):
             self.json_line.setText(json_p)
+        if bd_folder and os.path.exists(bd_folder):
+            self.bd_folder_line.setText(bd_folder)
 
     def run(self):
         app = QApplication(sys.argv)

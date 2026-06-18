@@ -39,22 +39,33 @@ class ExcelHandler:
         """读取表头基准（从第二列开始）"""
         bases = []
         invalid_counter = 0
+        empty_counter = 0
         current_col = 2  # 从B列开始
-        
+
         while True:
             # 获取当前基准的四列范围
             base_cols = [current_col + i for i in range(4)]
-            
+
             # 检查是否超出表格范围
             if base_cols[-1] > self.ws.max_column:
                 break
-            
+
             # 获取基准四列的值
             base_values = [
                 self.ws.cell(row=1, column=col).value
                 for col in base_cols
             ]
-            
+
+            # 如果整块全空，计数并快速跳过
+            if all(v in (None, "") for v in base_values):
+                empty_counter += 1
+                if empty_counter >= 2:
+                    break
+                current_col += 4
+                continue
+            else:
+                empty_counter = 0
+
             # 验证基准格式
             if self._is_valid_base(base_values):
                 bases.append(base_values)
@@ -66,13 +77,13 @@ class ExcelHandler:
                     bases.append(base_values)
                 else:
                     invalid_counter = 0
-                
+
                 # 超过两个无效基准时停止
                 if invalid_counter >= 2:
                     break
-            
+
             current_col += 4
-        
+
         return bases
 
     def _is_valid_base(self, values):
