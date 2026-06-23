@@ -1,194 +1,26 @@
 import sys
 import re
+import os
+import glob
+import json
+from datetime import datetime
+
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QScrollArea, QRadioButton, QTableWidget, QTableWidgetItem,
                              QHeaderView, QPushButton, QButtonGroup, QDialog, QLabel, QMessageBox,
-                             QTextEdit, QProgressDialog, QStyledItemDelegate, QComboBox)
-from PyQt5.QtWebEngineWidgets import QWebEngineView  # 新增Web引擎组件
-from PyQt5.QtCore import Qt, QUrl, QThread, QEvent, QSettings
-from PyQt5.QtGui import QTextCursor, QIcon
+                             QTextEdit, QProgressDialog, QStyledItemDelegate)
+from PyQt5.QtCore import Qt, QThread, QEvent, QSettings
+from PyQt5.QtGui import QIcon
+
 from src.Excel_Info import GetWriteInfo
 from src.Excel_Writer import ExcelWriter, reload_match_dict
-from window.settings_dialog import SettingsDialog
 from src.mapping_manager import apply_keyboard_mappings, get_keyboard_mappings
-from src.BD_Handler import parse_bd_detail, find_bd_columns
-import time
-from pathlib import Path
-from collections import Counter, defaultdict
-import logging
-import os
-import glob
-from datetime import datetime, timezone, timedelta
-
-# 自定义日志处理器，用于将日志输出到GUI窗口
-class QTextEditLogger(logging.Handler):
-    def __init__(self, text_widget):
-        super().__init__()
-        self.text_widget = text_widget
-        self.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-
-    def emit(self, record):
-        msg = self.format(record)
-        self.text_widget.append(msg)
-
-# 配置日志
-def setup_logger(text_widget=None):
-    # 创建logs目录（如果不存在）
-    if not os.path.exists("logs"):
-        os.makedirs("logs")
-    
-    # 生成日志文件名（使用当前日期）
-    log_filename = f"logs/app_{datetime.now().strftime('%Y-%m-%d')}.log"
-    
-    # 配置日志格式
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-    
-    # 创建文件处理器
-    file_handler = logging.FileHandler(log_filename, encoding='utf-8')
-    file_handler.setFormatter(formatter)
-    
-    # 创建控制台处理器
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(formatter)
-    
-    # 创建日志记录器
-    logger = logging.getLogger(__name__)
-    logger.setLevel(logging.INFO)
-    
-    # 防止重复添加处理器
-    if not logger.handlers:
-        # 添加处理器
-        logger.addHandler(file_handler)
-        logger.addHandler(console_handler)
-    
-    # 如果提供了文本窗口，添加GUI处理器
-    if text_widget:
-        # 检查是否已经添加了GUI处理器
-        gui_handler_exists = any(
-            isinstance(h, QTextEditLogger) and h.text_widget == text_widget 
-            for h in logger.handlers
-        )
-        if not gui_handler_exists:
-            gui_handler = QTextEditLogger(text_widget)
-            gui_handler.setFormatter(formatter)
-            logger.addHandler(gui_handler)
-    
-    # 禁用日志传播，防止重复输出
-    logger.propagate = False
-    
-    return logger
-
-# 创建logger实例
-logger = setup_logger()
-
-class NewWindow(QDialog):
-    def __init__(self, selected_item, html_base_path, parent=None):
-        super().__init__(parent)
-        self.setAttribute(Qt.WA_DeleteOnClose)  # 关闭时自动释放资源
-        try:
-            self.setWindowTitle(f"HTML查看器 - {selected_item}")
-            self.setGeometry(0, 0, 1100, 800)
-
-            self.html_base_path = Path(html_base_path)
-
-            # 星期名称列表
-            self.weekday_names = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
-
-            # 自动检测北京时区 (UTC+8) 当前星期
-            beijing_tz = timezone(timedelta(hours=8))
-            current_weekday = datetime.now(beijing_tz).weekday()  # Monday=0, Sunday=6
-            self.default_day = self.weekday_names[current_weekday]
-            self.current_day = self.default_day
-
-            layout = QVBoxLayout()
-            layout.setContentsMargins(0, 0, 0, 0)
-            layout.setSpacing(0)
-
-            # 工具栏：星期选择（紧凑）
-            toolbar_widget = QWidget()
-            toolbar_widget.setMaximumHeight(28)
-            toolbar_widget.setStyleSheet("background-color: #f5f5f5; border-bottom: 1px solid #ddd;")
-            toolbar_layout = QHBoxLayout(toolbar_widget)
-            toolbar_layout.setContentsMargins(4, 1, 4, 1)
-            toolbar_layout.setSpacing(3)
-            toolbar_layout.addWidget(QLabel("高亮:"))
-            self.day_combo = QComboBox()
-            self.day_combo.setMaximumWidth(80)
-            self.day_combo.setStyleSheet("font-size: 11px;")
-            self.day_combo.addItems(self.weekday_names)
-            idx = self.weekday_names.index(self.default_day)
-            self.day_combo.setCurrentIndex(idx)
-            self.day_combo.currentTextChanged.connect(self._on_day_changed)
-            toolbar_layout.addWidget(self.day_combo)
-            toolbar_layout.addStretch()
-            layout.addWidget(toolbar_widget)
-
-            # Web视图
-            self.web_view = QWebEngineView()
-
-            if self.html_base_path.exists():
-                self.web_view.load(QUrl.fromLocalFile(str(self.html_base_path)))
-            else:
-                self.web_view.setHtml(f"<h1>文件未找到</h1><p>{self.html_base_path}</p>")
-
-            # 页面加载完成后注入高亮JS
-            self.web_view.loadFinished.connect(self._inject_highlight)
-
-            layout.addWidget(self.web_view)
-            self.setLayout(layout)
-
-        except Exception as e:
-            QMessageBox.warning(self, "错误", "当前HTML文件路径错误，请检查！")
-
-    def closeEvent(self, event):
-        """关闭窗口时释放 Web 引擎资源，防止 QtWebEngineProcess 进程残留"""
-        if hasattr(self, 'web_view'):
-            self.web_view.setPage(None)
-            self.web_view.stop()
-            self.web_view = None
-        super().closeEvent(event)
-
-    def _on_day_changed(self, day_text):
-        """用户切换星期时重新注入高亮"""
-        self.current_day = day_text
-        self._inject_highlight()
-
-    def _inject_highlight(self, ok=True):
-        """通过 JavaScript 高亮当前星期文字"""
-        if not ok:
-            return
-        js_code = f"""
-        (function() {{
-            var oldSpans = document.querySelectorAll('.weekday-highlight');
-            for (var i = 0; i < oldSpans.length; i++) {{
-                var parent = oldSpans[i].parentNode;
-                var txt = document.createTextNode(oldSpans[i].textContent);
-                parent.replaceChild(txt, oldSpans[i]);
-                parent.normalize();
-            }}
-            var target = "{self.current_day}";
-            if (!target) return;
-            var walker = document.createTreeWalker(
-                document.body, NodeFilter.SHOW_TEXT, null, false
-            );
-            var nodes = [];
-            while (walker.nextNode()) nodes.push(walker.currentNode);
-            for (var i = 0; i < nodes.length; i++) {{
-                var node = nodes[i];
-                if (node.textContent.indexOf(target) !== -1) {{
-                    var span = document.createElement('span');
-                    span.className = 'weekday-highlight';
-                    span.style.backgroundColor = 'yellow';
-                    span.style.color = 'red';
-                    span.style.fontWeight = 'bold';
-                    span.textContent = node.textContent;
-                    node.parentNode.replaceChild(span, node);
-                }}
-            }}
-        }})();
-        """
-        self.web_view.page().runJavaScript(js_code)
-
+from src.BD_Handler import parse_bd_detail, load_bd_config, export_bd_data, sort_bd_data
+from src.data_loader import load_pic_config, load_json_to_storage, load_bd_json, reinitialize_data
+from src.exporter import collect_export_write_ops, collect_sort_stats
+from src.log_setup import logger, setup_logger
+from window.html_viewer import NewWindow
+from window.settings_dialog import SettingsDialog
 
 
 
@@ -327,53 +159,18 @@ class EnhancedDataEditor(QMainWindow):
         # 从JSON文件加载数据（用于二次整理时引入新数据）
         self._bd_json_restore = None
         if json_path:
-            try:
-                if self.get_info is not None:
-                    json_data = self.get_info.get_json(json_path)
-                else:
-                    import json
-                    with open(json_path, 'r', encoding='utf-8') as f:
-                        json_data = json.load(f)
-                if json_data and isinstance(json_data, dict):
-                    first_key = next(iter(json_data))
-                    first_val = json_data[first_key]
-                    # 检测 BD 格式：{label: {code, home, away, scores}}
-                    if isinstance(first_val, dict) and "code" in first_val and "scores" in first_val:
-                        self._bd_json_restore = json_data
-                        logger.info(f"JSON 识别为 BD 格式: {len(json_data)} 场比赛")
-                    elif isinstance(first_val, dict) and re.match(r'\d{3}', str(first_key)):
-                        # 新格式：{code: {category: [scores]}}
-                        imported_count = 0
-                        for code, categories in json_data.items():
-                            for category, scores in categories.items():
-                                if category in self.data_storage:
-                                    self.data_storage[category][code] = scores
-                                    imported_count += 1
-                                else:
-                                    self.data_storage[category] = {code: scores}
-                                    imported_count += 1
-                        logger.info(f"成功从JSON文件加载数据: {imported_count} 项")
-                    else:
-                        # 旧格式：{category: {code: [scores]}}
-                        self.data_storage.update(json_data)
-                        logger.info("成功从JSON文件加载额外数据（旧格式）")
-            except Exception as e:
-                logger.exception("加载JSON数据时发生错误")
-                QMessageBox.warning(self, "警告", f"加载JSON数据失败：{str(e)}")
+            self.data_storage, bd_restore = load_json_to_storage(
+                json_path, self.get_info, self.data_storage, logger
+            )
+            if bd_restore:
+                self._bd_json_restore = bd_restore
 
         # 加载 BD 专属 JSON（如果存在）
         if self.bd_json_path:
-            try:
-                import json
-                with open(self.bd_json_path, 'r', encoding='utf-8') as f:
-                    bd_json_data = json.load(f)
-                if bd_json_data and isinstance(bd_json_data, dict):
-                    self._bd_json_restore = bd_json_data
-                    logger.info(f"BD JSON 加载成功: {len(bd_json_data)} 场比赛")
-            except Exception as e:
-                logger.exception("加载BD JSON数据时发生错误")
-                QMessageBox.warning(self, "警告", f"加载BD JSON数据失败：{str(e)}")
-        
+            bd_data = load_bd_json(self.bd_json_path, logger)
+            if bd_data:
+                self._bd_json_restore = bd_data
+
         self.current_window = None
         self.is_dirty = False          # 未保存修改标记
         self.worker_thread = None      # 后台工作线程引用
@@ -388,7 +185,14 @@ class EnhancedDataEditor(QMainWindow):
         else:
             self.data_mode = 'html'     # 有 HTML 或两者都有 → HTML 模式
 
-        self._load_pic_config()        # 加载图片模式配置
+        # 加载图片模式配置
+        pic_categories, pic_mapping, updated_storage = load_pic_config(
+            self.data_storage, self.flag, self.top_data
+        )
+        self.pic_categories = pic_categories
+        self.pic_mapping = pic_mapping
+        self.data_storage = updated_storage
+
         self.bd_categories = []        # BD 模式数据（延迟加载）
         self.bd_data_storage = {}
         self._bd_export_rows = {}       # {code: start_row} 记录 BD导出起始行，防止重复写入
@@ -634,106 +438,18 @@ class EnhancedDataEditor(QMainWindow):
 
     def _load_pic_config(self):
         """加载图片模式配置（与 mapping_data.txt 同格式：excel值：类别名）"""
-        self.pic_categories = []
-        self.pic_mapping = {}
-        try:
-            pic_file = "mapping/mapping_pic.txt"
-            if os.path.exists(pic_file):
-                with open(pic_file, "r", encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if line and "：" in line:
-                            value, key = line.split("：", 1)
-                            self.pic_mapping[key.strip()] = value.strip()
-                            self.pic_categories.append(key.strip())
-                # 将图片类别追加到 data_storage
-                for pic_cat in self.pic_categories:
-                    if pic_cat not in self.data_storage:
-                        if self.flag:
-                            # 有真实数据时使用 Excel 数据
-                            self.data_storage[pic_cat] = {row[0]: list(row[2:]) for row in self.top_data}
-                        else:
-                            # 无真实数据（BD-only）时用空数据
-                            self.data_storage[pic_cat] = {}
-        except Exception:
-            pass
+        self.pic_categories, self.pic_mapping, self.data_storage = load_pic_config(
+            self.data_storage, self.flag, self.top_data
+        )
 
     def _load_bd_config(self):
         """加载北单模式配置 — 从当前选择的 Excel 和 HTML 目录扫描"""
-        self.bd_categories = []
-        self.bd_data_storage = {}
-        try:
-            excel_path = self.bd_excel_path or (self.excel_path if hasattr(self, 'excel_path') and self.excel_path else "")
-            html_dir = self.bd_file_path or self.file_path or ""
-            logger.info(f"BD 加载: Excel = {excel_path}, BD HTML = {html_dir}")
-            if not excel_path or not os.path.exists(excel_path):
-                return
-            from openpyxl import load_workbook
-            wb = load_workbook(excel_path, read_only=True)
-            sheet_name = self.bd_sheet_name or (self.sheet_name if hasattr(self, 'sheet_name') and self.sheet_name else "")
-            if sheet_name and sheet_name in wb.sheetnames:
-                ws = wb[sheet_name]
-            else:
-                ws = wb.active
-            col_map = find_bd_columns(ws)
-            if not col_map:
-                wb.close()
-                logger.warning(f"BD Excel 未找到比赛编号 (row1 cols 2-{ws.max_column})")
-                return
-
-            # 2. 递归扫描 BD HTML 目录，用正则提取文件名中的北单号
-            available = {}  # {北单号(纯数字): 文件路径}
-            if html_dir and os.path.isdir(html_dir):
-                for fpath in glob.glob(os.path.join(html_dir, '**', '*.html'), recursive=True):
-                    fname = os.path.basename(fpath)
-                    if fname == 'A数量.html':
-                        continue
-                    m = re.search(r'北单(\d+)', fname)
-                    if m:
-                        num = m.group(1)
-                        if num not in available:
-                            available[num] = fpath
-
-            # 3. 按 Excel 列顺序构建列表
-            sorted_codes = sorted(col_map.keys(),
-                                  key=lambda x: int(x) if x.isdigit() else 999)
-            for code_str in sorted_codes:
-                info = col_map[code_str]
-                home, away = info["teams"]
-                label = f"北单{code_str} {home} VS {away}" if home else f"北单{code_str}"
-
-                # 用 int 比较匹配文件（01 匹配 1，北单1 匹配 北单01）
-                match_file = None
-                code_int = int(code_str)
-                for fnum, fpath in available.items():
-                    if int(fnum) == code_int:
-                        match_file = fpath
-                        break
-
-                self.bd_categories.append(label)
-                self.bd_data_storage[label] = {
-                    "code": code_str,
-                    "home": home,
-                    "away": away,
-                    "scores": [],
-                    "html_file": match_file,
-                }
-            wb.close()
-
-            # 4. 从 JSON 恢复 BD 数据（_bd_json_restore 在 __init__ 中设置）
-            if self._bd_json_restore:
-                restored = 0
-                for label, info in self._bd_json_restore.items():
-                    if label in self.bd_data_storage:
-                        self.bd_data_storage[label]["scores"] = info.get("scores", [])
-                        restored += 1
-                if restored:
-                    logger.info(f"BD 从 JSON 恢复 {restored} 场比赛数据")
-
-            logger.info(f"BD 加载: {len(self.bd_categories)} 个比赛"
-                        f" ({sum(1 for v in self.bd_data_storage.values() if v['html_file'])} 个匹配文件)")
-        except Exception as e:
-            logger.exception("BD 配置加载失败")
+        excel_path = self.bd_excel_path or (self.excel_path if hasattr(self, 'excel_path') and self.excel_path else "")
+        html_dir = self.bd_file_path or self.file_path or ""
+        sheet_name = self.bd_sheet_name or (self.sheet_name if hasattr(self, 'sheet_name') and self.sheet_name else "")
+        self.bd_categories, self.bd_data_storage = load_bd_config(
+            excel_path, html_dir, sheet_name, self._bd_json_restore, logger
+        )
 
     def _load_bd_config_with_progress(self):
         """带进度提示的 BD 配置加载"""
@@ -1169,42 +885,10 @@ class EnhancedDataEditor(QMainWindow):
         logger.info(f'开始收集写入操作 *{selected_item}*')
 
         # 第一阶段：收集写操作并逐项验证（主线程，可弹窗）
-        write_ops = []
-        invalid_items = []
-
-        for code, values in self.data_storage[selected_item].items():
-            try:
-                line_location, column_location = self.get_info.get_location(
-                    code, ex_header, self.excel_first_columns
-                )
-                if line_location is None or column_location is None:
-                    logger.error(f"get_location 返回 None for code={code}, ex_header={ex_header}")
-                    continue
-
-                # 验证每个分值，保持列位置不变
-                validated_vals = []
-                for val in values:
-                    if is_pic:
-                        # 图片模式：只拒绝空值，允许汉字直接通过
-                        if val is None or str(val).strip() == "":
-                            validated_vals.append('')
-                        else:
-                            validated_vals.append(str(val).strip())
-                    else:
-                        # HTML模式：标准验证
-                        result = ExcelWriter.validate_value(val)
-                        if result['valid']:
-                            validated_vals.append(result['converted'])
-                        else:
-                            validated_vals.append('')  # 占位，保持列偏移正确
-                            if val is not None and str(val).strip() != "":
-                                invalid_items.append(f"code={code}, 值='{val}': {result['message']}")
-
-                write_ops.append((line_location, column_location, validated_vals))
-
-            except Exception as e:
-                logger.exception(f"获取位置失败 - code: {code}")
-                return 0
+        write_ops, invalid_items = collect_export_write_ops(
+            self.get_info, self.data_storage, selected_item,
+            ex_header, is_pic, self.excel_first_columns, logger
+        )
 
         # 发现无效数据时弹窗确认
         if invalid_items:
@@ -1261,42 +945,13 @@ class EnhancedDataEditor(QMainWindow):
             QMessageBox.warning(self, "警告", "未设置 BD Excel 路径，请先配置")
             return
         sheet = self.bd_sheet_name or (self.sheet_name if hasattr(self, 'sheet_name') else None)
-        writer = ExcelWriter(excel_path, sheet)
-        col_map = find_bd_columns(writer.ws)
-        if code not in col_map:
-            QMessageBox.warning(self, "错误", f"Excel 中未找到编号 {code} 的列")
-            return
 
-        sc = col_map[code]["start_col"]
-
-        # 检查是否已导出过（覆盖写入，防止重复追加）
-        prev_info = self._bd_export_rows.get(code)
-        if prev_info is not None:
-            start_row, prev_count = prev_info
-            row = start_row
-            # 清除旧数据（新数据可能比旧数据短，避免残留）
-            for r in range(row, row + prev_count):
-                for c in range(4):
-                    writer.ws.cell(row=r, column=sc + c).value = None
+        success, message = export_bd_data(bd_info, excel_path, sheet, self._bd_export_rows, logger)
+        if success:
+            self.is_dirty = False
+            self.logger.info(f"BD 导出完成: {selected_item} → {len(scores)} 行")
         else:
-            # 首次导出：找第一个空行
-            start_row = 2
-            while start_row <= writer.ws.max_row:
-                if writer.ws.cell(row=start_row, column=sc).value in (None, ""):
-                    break
-                start_row += 1
-            row = start_row
-
-        for score_set in scores:
-            normalized = [apply_keyboard_mappings(str(s)) for s in score_set[:4]]
-            writer.batch_write_list(row, sc, normalized)
-            row += 1
-
-        # 记录本次导出的起始行和行数，下次导出覆盖写入
-        self._bd_export_rows[code] = (start_row, len(scores))
-        writer.save()
-        self.is_dirty = False
-        self.logger.info(f"BD 导出完成: {selected_item} → {len(scores)} 行")
+            QMessageBox.warning(self, "错误", message)
 
     def _run_write_worker(self, write_ops, task_name):
         """启动后台写入线程，不阻塞UI"""
@@ -1373,19 +1028,7 @@ class EnhancedDataEditor(QMainWindow):
                 self._sort_bd()
                 return
 
-            stats = defaultdict(Counter)
-            logger.info("开始排序")
-
-            for name in self.data_storage:
-                if name in self.pic_categories:
-                    continue
-                number_dict = self.data_storage[name]
-                for number, values in number_dict.items():
-                    for value in values:
-                        if value.strip() and value.strip().isdigit():
-                            stats[number][value] += 1
-
-            dict_counter = {number: dict(counts.most_common()) for number, counts in stats.items()}
+            dict_counter = collect_sort_stats(self.data_storage, self.pic_categories, logger)
 
             write_ops = []
             for column, contents in dict_counter.items():
@@ -1407,58 +1050,21 @@ class EnhancedDataEditor(QMainWindow):
 
     def _sort_bd(self):
         """BD 排序 — 统计 bd_data_storage 中比分频率，纵向写入 Excel row 84"""
-        stats = defaultdict(Counter)
-        skipped_count = 0
-        for name, bd_info in self.bd_data_storage.items():
-            for score_set in bd_info.get("scores", []):
-                # 跳过全空行
-                if not any(str(v).strip() for v in score_set):
-                    continue
-                for value in score_set:
-                    value = str(value).strip()
-                    if not re.fullmatch(r'\d{2}', value):
-                        if value:
-                            skipped_count += 1
-                        continue
-                    try:
-                        iv = int(value)
-                        if iv <= 50:
-                            stats[bd_info["code"]][value] += 1
-                        else:
-                            skipped_count += 1
-                    except ValueError:
-                        skipped_count += 1
-
-        if skipped_count:
-            logger.warning(f"BD 排序跳过 {skipped_count} 个无效或非比分值")
-            QMessageBox.information(self, "排序提示",
-                                    f"排序完成，共跳过 {skipped_count} 个无效或非比分数据。")
-
-        dict_counter = {number: dict(counts.most_common()) for number, counts in stats.items()}
-
-        excel_path = self.bd_excel_path or (self.excel_path if hasattr(self, 'excel_path') and self.excel_path else "")
-        if not excel_path:
-            QMessageBox.warning(self, "警告", "未设置 BD Excel 路径，请先配置")
-            return
-        sheet = self.bd_sheet_name or (self.sheet_name if hasattr(self, 'sheet_name') else None)
-        writer = ExcelWriter(excel_path, sheet)
-        col_map = find_bd_columns(writer.ws)
-        for code_num, info in col_map.items():
-            contents = dict_counter.get(code_num, {})
-            if contents:
-                sc = info["start_col"]
-                writer.batch_write_cell(83, sc, f"BD{code_num}统计")
-                writer.batch_write_dict(84, sc, contents)
-
-        writer.save()
-        self.is_dirty = False
-        logger.info("BD 排序完成")
-        return dict_counter
+        try:
+            excel_path = self.bd_excel_path or (self.excel_path if hasattr(self, 'excel_path') and self.excel_path else "")
+            if not excel_path:
+                QMessageBox.warning(self, "警告", "未设置 BD Excel 路径，请先配置")
+                return
+            sheet = self.bd_sheet_name or (self.sheet_name if hasattr(self, 'sheet_name') else None)
+            sort_bd_data(self.bd_data_storage, excel_path, sheet, logger)
+            self.is_dirty = False
+        except Exception as e:
+            logger.exception("BD 排序失败")
+            QMessageBox.critical(self, "错误", f"BD 排序失败：{str(e)}")
 
     def export_json(self):
         """导出JSON文件 - BD模式单独保存"""
         try:
-            import json
             if not os.path.exists("./json"):
                 os.makedirs("./json")
 
@@ -1610,46 +1216,30 @@ class EnhancedDataEditor(QMainWindow):
             return
 
         try:
-            # 用新路径重新创建 GetWriteInfo（传入 mapping_path 和 sheet_name）
-            self.get_info = GetWriteInfo(html_folder, excel_path, sheet_name, mapping_path)
-            top_data = self.get_info.get_tabel_info()
-            left_items, excel_name = self.get_info.get_file_and_excel_info()
+            result = reinitialize_data(html_folder, excel_path, sheet_name, mapping_path, logger)
 
-            # 更新实例属性
+            self.get_info = result['get_info']
             self.file_path = html_folder
             self.sheet_name = sheet_name
-            self.top_data = top_data
-            self.left_items = left_items
+            self.top_data = result['top_data']
+            self.left_items = result['left_items']
             self.flag = True
-            self.fixed_values = {row[0]: row[1] for row in self.top_data}
+            self.fixed_values = result['fixed_values']
             self.writer = ExcelWriter(excel_path, sheet_name)
-            self.excel_first_columns = excel_name
-            self.mapping = self.get_info.get_mapping()
-            self.header_bases = self.get_info.get_header_bases()
-            self.url = self.get_info.get_file_dict()
-
-            # 重新构建 data_storage
-            self.data_storage = {item: {row[0]: list(row[2:]) for row in self.top_data}
-                               for item in self.left_items}
+            self.excel_first_columns = result['excel_name']
+            self.mapping = result['mapping']
+            self.header_bases = result['header_bases']
+            self.url = result['url']
+            self.data_storage = result['data_storage']
 
             # 重新加载图片模式配置
             self._load_pic_config()
 
             # 重新导入 JSON 数据
             if json_path and os.path.exists(json_path):
-                json_data = self.get_info.get_json(json_path)
-                if json_data and isinstance(json_data, dict):
-                    first_key = next(iter(json_data))
-                    first_val = json_data[first_key]
-                    if isinstance(first_val, dict) and re.match(r'\d{3}', str(first_key)):
-                        for code, categories in json_data.items():
-                            for category, scores in categories.items():
-                                if category in self.data_storage:
-                                    self.data_storage[category][code] = scores
-                                else:
-                                    self.data_storage[category] = {code: scores}
-                    else:
-                        self.data_storage.update(json_data)
+                self.data_storage, _ = load_json_to_storage(
+                    json_path, self.get_info, self.data_storage, logger
+                )
 
             # 重建单选按钮并刷新表格
             self._rebuild_radio_buttons()

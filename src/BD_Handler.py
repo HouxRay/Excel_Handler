@@ -7,6 +7,11 @@ BD（北单）模式数据处理模块
 """
 import os
 import re
+import glob
+from collections import Counter, defaultdict
+from openpyxl import load_workbook
+from src.Excel_Writer import ExcelWriter
+from src.mapping_manager import apply_keyboard_mappings
 
 
 def parse_bd_summary(html_path: str) -> list[dict]:
@@ -118,6 +123,173 @@ def find_bd_columns(ws) -> dict:
             teams[1] = str(v).strip() if v else ""
         result[code_num] = {"start_col": start_col, "teams": teams}
     return result
+
+
+def load_bd_config(excel_path, html_dir, sheet_name, bd_json_restore, logger):
+    """
+    加载北单模式配置 — 从 Excel 和 HTML 目录扫描。
+
+    Returns: (bd_categories, bd_data_storage)
+        bd_categories: [label, ...]
+        bd_data_storage: {label: {code, home, away, scores, html_file}}
+    """
+    bd_categories = []
+    bd_data_storage = {}
+    try:
+        if not excel_path or not os.path.exists(excel_path):
+            return bd_categories, bd_data_storage
+
+        wb = load_workbook(excel_path, read_only=True)
+        if sheet_name and sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+        else:
+            ws = wb.active
+        col_map = find_bd_columns(ws)
+        if not col_map:
+            wb.close()
+            logger.warning(f"BD Excel 未找到比赛编号 (row1 cols 2-{ws.max_column})")
+            return bd_categories, bd_data_storage
+
+        # 2. 递归扫描 BD HTML 目录
+        available = {}
+        if html_dir and os.path.isdir(html_dir):
+            for fpath in glob.glob(os.path.join(html_dir, '**', '*.html'), recursive=True):
+                fname = os.path.basename(fpath)
+                if fname == 'A数量.html':
+                    continue
+                m = re.search(r'北单(\d+)', fname)
+                if m:
+                    num = m.group(1)
+                    if num not in available:
+                        available[num] = fpath
+
+        # 3. 按 Excel 列顺序构建列表
+        sorted_codes = sorted(col_map.keys(),
+                              key=lambda x: int(x) if x.isdigit() else 999)
+        for code_str in sorted_codes:
+            info = col_map[code_str]
+            home, away = info["teams"]
+            label = f"北单{code_str} {home} VS {away}" if home else f"北单{code_str}"
+
+            match_file = None
+            code_int = int(code_str)
+            for fnum, fpath in available.items():
+                if int(fnum) == code_int:
+                    match_file = fpath
+                    break
+
+            bd_categories.append(label)
+            bd_data_storage[label] = {
+                "code": code_str,
+                "home": home,
+                "away": away,
+                "scores": [],
+                "html_file": match_file,
+            }
+        wb.close()
+
+        # 4. 从 JSON 恢复 BD 数据
+        if bd_json_restore:
+            restored = 0
+            for label, info in bd_json_restore.items():
+                if label in bd_data_storage:
+                    bd_data_storage[label]["scores"] = info.get("scores", [])
+                    restored += 1
+            if restored:
+                logger.info(f"BD 从 JSON 恢复 {restored} 场比赛数据")
+
+        logger.info(f"BD 加载: {len(bd_categories)} 个比赛"
+                    f" ({sum(1 for v in bd_data_storage.values() if v['html_file'])} 个匹配文件)")
+    except Exception as e:
+        logger.exception("BD 配置加载失败")
+
+    return bd_categories, bd_data_storage
+
+
+def export_bd_data(bd_info, excel_path, sheet, _bd_export_rows, logger):
+    """
+    BD 模式导出 — 纵向追加写入，覆盖已有导出行。
+    Returns: (success, message)
+    """
+    scores = bd_info.get("scores", [])
+    code = bd_info.get("code", "")
+
+    writer = ExcelWriter(excel_path, sheet)
+    col_map = find_bd_columns(writer.ws)
+    if code not in col_map:
+        return False, f"Excel 中未找到编号 {code} 的列"
+
+    sc = col_map[code]["start_col"]
+
+    prev_info = _bd_export_rows.get(code)
+    if prev_info is not None:
+        start_row, prev_count = prev_info
+        row = start_row
+        for r in range(row, row + prev_count):
+            for c in range(4):
+                writer.ws.cell(row=r, column=sc + c).value = None
+    else:
+        start_row = 2
+        while start_row <= writer.ws.max_row:
+            if writer.ws.cell(row=start_row, column=sc).value in (None, ""):
+                break
+            start_row += 1
+        row = start_row
+
+    for score_set in scores:
+        normalized = [apply_keyboard_mappings(str(s)) for s in score_set[:4]]
+        writer.batch_write_list(row, sc, normalized)
+        row += 1
+
+    writer.save()
+    _bd_export_rows[code] = (start_row, len(scores))
+    logger.info(f"BD 导出完成: {len(scores)} 行")
+    return True, f"BD 导出完成: {len(scores)} 行"
+
+
+def sort_bd_data(bd_data_storage, excel_path, sheet, logger):
+    """
+    BD 排序 — 统计比分频率，写入 Excel row 84。
+    Returns: dict_counter or None
+    """
+    stats = defaultdict(Counter)
+    skipped_count = 0
+    for name, bd_info in bd_data_storage.items():
+        for score_set in bd_info.get("scores", []):
+            if not any(str(v).strip() for v in score_set):
+                continue
+            for value in score_set:
+                value = str(value).strip()
+                if not re.fullmatch(r'\d{2}', value):
+                    if value:
+                        skipped_count += 1
+                    continue
+                try:
+                    iv = int(value)
+                    if iv <= 50:
+                        stats[bd_info["code"]][value] += 1
+                    else:
+                        skipped_count += 1
+                except ValueError:
+                    skipped_count += 1
+
+    if skipped_count:
+        logger.warning(f"BD 排序跳过 {skipped_count} 个无效或非比分值")
+
+    dict_counter = {number: dict(counts.most_common()) for number, counts in stats.items()}
+
+    writer = ExcelWriter(excel_path, sheet)
+    col_map = find_bd_columns(writer.ws)
+    for code_num, info in col_map.items():
+        contents = dict_counter.get(code_num, {})
+        if contents:
+            sc = info["start_col"]
+            writer.batch_write_cell(83, sc, f"BD{code_num}统计")
+            writer.batch_write_dict(84, sc, contents)
+
+    writer.save()
+    logger.info("BD 排序完成")
+    return dict_counter
 
 
 def build_bd_data(parsed_matches: list[dict], detail_scores: dict) -> dict:
