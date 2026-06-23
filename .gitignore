@@ -2,7 +2,7 @@
 build/
 dist/
 
-# Python
+# Python cache
 __pycache__/
 *.pyc
 *.pyo
@@ -12,9 +12,32 @@ config.ini
 
 # Logs
 logs/
+*.log
 
 # Test data
 test_excel/
 
-# Spec file is tracked (needed for PyInstaller)
-# main.spec
+# 编辑器
+.vscode/
+.idea/
+
+# 源数据（运行时路径，非核心代码）
+src/2025-03-03-竞彩/
+src/sample*.xlsx
+src/E5467B00
+
+# AI 测试脚本
+AI/
+
+# JSON 数据导出
+json/
+
+# 打包/备份文件
+*.zip
+*.backup
+
+# 需求文档
+Requires/
+Skill/
+update/
+update_requires/
