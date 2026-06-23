@@ -1,4 +1,4 @@
-# Doro统治世界 — Excel数据分析工具
+# ExcelHandler — Excel数据分析工具
 
 一个基于 **PyQt5** 的桌面应用程序，用于读取、编辑和导出竞彩体育数据分析结果。通过选择 HTML 数据源和 Excel 模板，自动匹配数据并写入指定位置，支持多 Sheet 选择、数据排序、HTML 预览等功能。
 
@@ -16,13 +16,11 @@
 │   ├── Excel_Handler.py         # Excel 文件读取（表头、首列数据）
 │   ├── Excel_Info.py            # 数据协调层：读取、映射、定位计算
 │   ├── Excel_Writer.py          # Excel 数据写入（含验证、多线程写入）
-│   ├── Excel_Writer_text.py     # 旧版文本式 Excel 写入器
 │   ├── File_Reader.py           # 文件系统读取（HTML 文件遍历、文件名提取）
 │   ├── Name_Matcher.py          # 名称匹配（文件名 ↔ Excel 行映射）
 │   ├── worker.py                # 后台工作线程（Excel 写入不阻塞 UI）
 │   ├── mapping_manager.py       # 映射持久化管理（MATCH_DICT + 键盘映射）
 │   ├── Data_viewer_test.py      # Tkinter 版测试数据查看器
-│   └── Name_Matcher_test1.py    # 名称匹配测试脚本
 ├── mapping/                     # 映射配置文件
 │   ├── mapping_data.txt         # HTML 模式：文件名 ↔ Excel 列名映射
 │   └── mapping_pic.txt          # 图片模式：类别名映射
@@ -131,7 +129,7 @@ python main.py
 
 ## 当前版本
 
-**v2.4.1**（2026-06-17）
+**v3.1.0**（2026-06-17）
 
 ## 依赖项
 
