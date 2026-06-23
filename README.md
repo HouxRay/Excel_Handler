@@ -16,13 +16,11 @@
 │   ├── Excel_Handler.py         # Excel 文件读取（表头、首列数据）
 │   ├── Excel_Info.py            # 数据协调层：读取、映射、定位计算
 │   ├── Excel_Writer.py          # Excel 数据写入（含验证、多线程写入）
-│   ├── Excel_Writer_text.py     # 旧版文本式 Excel 写入器
 │   ├── File_Reader.py           # 文件系统读取（HTML 文件遍历、文件名提取）
 │   ├── Name_Matcher.py          # 名称匹配（文件名 ↔ Excel 行映射）
 │   ├── worker.py                # 后台工作线程（Excel 写入不阻塞 UI）
 │   ├── mapping_manager.py       # 映射持久化管理（MATCH_DICT + 键盘映射）
 │   ├── Data_viewer_test.py      # Tkinter 版测试数据查看器
-│   └── Name_Matcher_test1.py    # 名称匹配测试脚本
 ├── mapping/                     # 映射配置文件
 │   ├── mapping_data.txt         # HTML 模式：文件名 ↔ Excel 列名映射
 │   └── mapping_pic.txt          # 图片模式：类别名映射
