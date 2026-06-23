@@ -6,6 +6,34 @@
 
 ---
 
+## 2026-06-23 — 路径选择器双Excel/双JSON支持；BD模式启动优化 (v3.0.0→v3.1.0)
+
+### 功能升级：路径选择器双模式分组
+
+**文件：** [window/table_qt_2.py](window/table_qt_2.py)、[window/table_qt.py](window/table_qt.py)、[window/table_conbine.py](window/table_conbine.py)
+
+路径选择界面拆分为上下两个独立分组，JC 和 BD 各自独立配置：
+
+- **JC 模式分组：** HTML文件夹路径、Excel文件路径、JSON文件路径、Sheet 下拉框
+- **北单模式分组：** 北单文件夹路径、BD Excel文件路径、BD JSON文件路径、Sheet 下拉框
+- **返回 8 元组：** `(jc_folder, jc_excel, jc_json, jc_sheet, bd_folder, bd_excel, bd_sheet, bd_json)`
+- **config.ini 持久化：** 新增 `bd_excel_path`、`bd_sheet_name`、`bd_json_path` 独立存储
+- BD 字段全部可选，留空时 fallback 到 JC 路径（完全向后兼容）
+
+### BD 模式启动优化
+
+**文件：** [window/table_qt.py](window/table_qt.py)
+
+- **BD-only 启动自动加载：** 仅填 BD 路径时，启动自动加载 BD 配置并默认进入 BD 模式，无需手动点按"图片→北单"
+- **加载进度提示：** 新增 `_load_bd_config_with_progress()`，BD 加载时显示 QProgressDialog（"正在加载北单模式..."），避免用户误以为卡顿
+- **切换 BD 模式时同样带进度提示**
+
+### 版本号
+
+- `v3.0.0` → `v3.1.0`（功能升级）
+
+---
+
 ## 2026-06-18 — BD（北单）模式正式接入；映射文件独立标签页；多 Bug 修复 (v2.4.1→v3.0.0)
 
 ### 新功能：BD（北单）模式

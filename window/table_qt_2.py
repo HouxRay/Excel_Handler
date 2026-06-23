@@ -1,7 +1,8 @@
 import sys
 from PyQt5.QtWidgets import (QApplication, QWidget, QPushButton,
                              QLineEdit, QLabel, QFileDialog, QHBoxLayout,
-                             QVBoxLayout, QMessageBox, QDialog, QComboBox)
+                             QVBoxLayout, QMessageBox, QDialog, QComboBox,
+                             QGroupBox)
 from PyQt5.QtGui import QTextCursor, QIcon
 from PyQt5.QtCore import QSettings
 import os, logging
@@ -13,34 +14,34 @@ def setup_logger(text_widget=None):
     # 创建logs目录（如果不存在）
     if not os.path.exists("logs"):
         os.makedirs("logs")
-    
+
     # 生成日志文件名（使用当前日期）
     log_filename = f"logs/app_{datetime.now().strftime('%Y-%m-%d')}.log"
-    
+
     # 配置日志格式
     formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-    
+
     # 创建文件处理器
     file_handler = logging.FileHandler(log_filename, encoding='utf-8')
     file_handler.setFormatter(formatter)
-    
+
     # 创建控制台处理器
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(formatter)
-    
+
     # 创建日志记录器
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.INFO)
-    
+
     # 防止重复添加处理器
     if not logger.handlers:
         # 添加处理器
         logger.addHandler(file_handler)
         logger.addHandler(console_handler)
-    
+
     # 禁用日志传播，防止重复输出
     logger.propagate = False
-    
+
     return logger
 
 # 创建logger实例
@@ -49,15 +50,17 @@ logger = setup_logger()
 class PathSelector(QDialog):
     def __init__(self):
         super().__init__()
-        self.selected_paths = (None, None, None, None, None)  # (folder, file, json, sheet, bd_folder)
-        self.sheet_names = []
+        # (jc_folder, jc_excel, jc_json, jc_sheet, bd_folder, bd_excel, bd_sheet, bd_json)
+        self.selected_paths = (None, None, None, None, None, None, None, None)
+        self.jc_sheet_names = []
+        self.bd_sheet_names = []
         self.initUI()
 
     def initUI(self):
         # 窗口设置
         self.setWindowTitle('路径选择器')
-        self.setGeometry(300, 300, 500, 200)
-        
+        self.setGeometry(300, 300, 550, 450)
+
         try:
             icon_path = "assets/pic.ico"  # 图标文件路径
             if os.path.exists(icon_path):
@@ -67,168 +70,265 @@ class PathSelector(QDialog):
         except Exception as e:
             logger.exception("设置窗口图标时发生错误")
 
-        # 文件夹路径选择组件
-        self.folder_label = QLabel('文件夹路径:')
-        self.folder_line = QLineEdit()
-        self.folder_btn = QPushButton('浏览...')
-        self.folder_btn.clicked.connect(self.select_folder)
+        # =============================================
+        # JC 模式分组
+        # =============================================
+        jc_group = QGroupBox("JC模式（HTML/图片）")
+        jc_layout = QVBoxLayout()
 
-        # Excel文件选择组件
-        self.file_label = QLabel('Excel文件路径:')
-        self.file_line = QLineEdit()
-        self.file_btn = QPushButton('浏览...')
-        self.file_btn.clicked.connect(self.select_file)
+        # JC 文件夹
+        jc_folder_layout = QHBoxLayout()
+        self.jc_folder_label = QLabel('HTML文件夹路径:')
+        self.jc_folder_line = QLineEdit()
+        self.jc_folder_btn = QPushButton('浏览...')
+        self.jc_folder_btn.clicked.connect(self.select_jc_folder)
+        jc_folder_layout.addWidget(self.jc_folder_label)
+        jc_folder_layout.addWidget(self.jc_folder_line)
+        jc_folder_layout.addWidget(self.jc_folder_btn)
 
-        # JSON文件选择组件
-        self.json_label = QLabel('JSON文件路径:')
-        self.json_line = QLineEdit()
-        self.json_btn = QPushButton('浏览...')
-        self.json_btn.clicked.connect(self.select_json)
+        # JC Excel
+        jc_excel_layout = QHBoxLayout()
+        self.jc_excel_label = QLabel('Excel文件路径:')
+        self.jc_excel_line = QLineEdit()
+        self.jc_excel_btn = QPushButton('浏览...')
+        self.jc_excel_btn.clicked.connect(self.select_jc_excel)
+        jc_excel_layout.addWidget(self.jc_excel_label)
+        jc_excel_layout.addWidget(self.jc_excel_line)
+        jc_excel_layout.addWidget(self.jc_excel_btn)
 
-        # 北单文件夹路径选择组件
+        # JC JSON
+        jc_json_layout = QHBoxLayout()
+        self.jc_json_label = QLabel('JSON文件路径:')
+        self.jc_json_line = QLineEdit()
+        self.jc_json_btn = QPushButton('浏览...')
+        self.jc_json_btn.clicked.connect(self.select_jc_json)
+        jc_json_layout.addWidget(self.jc_json_label)
+        jc_json_layout.addWidget(self.jc_json_line)
+        jc_json_layout.addWidget(self.jc_json_btn)
+
+        # JC Sheet 下拉框
+        jc_sheet_layout = QHBoxLayout()
+        self.jc_sheet_label = QLabel('选择Sheet:')
+        self.jc_sheet_combo = QComboBox()
+        self.jc_sheet_combo.setEnabled(False)
+        jc_sheet_layout.addWidget(self.jc_sheet_label)
+        jc_sheet_layout.addWidget(self.jc_sheet_combo)
+
+        jc_layout.addLayout(jc_folder_layout)
+        jc_layout.addLayout(jc_excel_layout)
+        jc_layout.addLayout(jc_json_layout)
+        jc_layout.addLayout(jc_sheet_layout)
+        jc_group.setLayout(jc_layout)
+
+        # =============================================
+        # BD 模式分组
+        # =============================================
+        bd_group = QGroupBox("北单模式")
+        bd_layout = QVBoxLayout()
+
+        # BD 文件夹
+        bd_folder_layout = QHBoxLayout()
         self.bd_folder_label = QLabel('北单文件夹路径:')
         self.bd_folder_line = QLineEdit()
         self.bd_folder_btn = QPushButton('浏览...')
         self.bd_folder_btn.clicked.connect(self.select_bd_folder)
+        bd_folder_layout.addWidget(self.bd_folder_label)
+        bd_folder_layout.addWidget(self.bd_folder_line)
+        bd_folder_layout.addWidget(self.bd_folder_btn)
 
-        # Sheet选择组件
-        self.sheet_label = QLabel('选择Sheet:')
-        self.sheet_combo = QComboBox()
-        self.sheet_combo.setEnabled(False)  # 初始禁用，选择Excel文件后启用
+        # BD Excel
+        bd_excel_layout = QHBoxLayout()
+        self.bd_excel_label = QLabel('BD Excel文件路径:')
+        self.bd_excel_line = QLineEdit()
+        self.bd_excel_btn = QPushButton('浏览...')
+        self.bd_excel_btn.clicked.connect(self.select_bd_excel)
+        bd_excel_layout.addWidget(self.bd_excel_label)
+        bd_excel_layout.addWidget(self.bd_excel_line)
+        bd_excel_layout.addWidget(self.bd_excel_btn)
 
+        # BD JSON
+        bd_json_layout = QHBoxLayout()
+        self.bd_json_label = QLabel('BD JSON文件路径:')
+        self.bd_json_line = QLineEdit()
+        self.bd_json_btn = QPushButton('浏览...')
+        self.bd_json_btn.clicked.connect(self.select_bd_json)
+        bd_json_layout.addWidget(self.bd_json_label)
+        bd_json_layout.addWidget(self.bd_json_line)
+        bd_json_layout.addWidget(self.bd_json_btn)
+
+        # BD Sheet 下拉框
+        bd_sheet_layout = QHBoxLayout()
+        self.bd_sheet_label = QLabel('选择Sheet:')
+        self.bd_sheet_combo = QComboBox()
+        self.bd_sheet_combo.setEnabled(False)
+        bd_sheet_layout.addWidget(self.bd_sheet_label)
+        bd_sheet_layout.addWidget(self.bd_sheet_combo)
+
+        bd_layout.addLayout(bd_folder_layout)
+        bd_layout.addLayout(bd_excel_layout)
+        bd_layout.addLayout(bd_json_layout)
+        bd_layout.addLayout(bd_sheet_layout)
+        bd_group.setLayout(bd_layout)
+
+        # =============================================
         # 确认按钮
+        # =============================================
         self.confirm_btn = QPushButton('确认')
         self.confirm_btn.clicked.connect(self.on_confirm)
 
-        # 布局管理
-        folder_layout = QHBoxLayout()
-        folder_layout.addWidget(self.folder_label)
-        folder_layout.addWidget(self.folder_line)
-        folder_layout.addWidget(self.folder_btn)
-
-        file_layout = QHBoxLayout()
-        file_layout.addWidget(self.file_label)
-        file_layout.addWidget(self.file_line)
-        file_layout.addWidget(self.file_btn)
-
-        json_layout = QHBoxLayout()
-        json_layout.addWidget(self.json_label)
-        json_layout.addWidget(self.json_line)
-        json_layout.addWidget(self.json_btn)
-
-        bd_layout = QHBoxLayout()
-        bd_layout.addWidget(self.bd_folder_label)
-        bd_layout.addWidget(self.bd_folder_line)
-        bd_layout.addWidget(self.bd_folder_btn)
-
-        sheet_layout = QHBoxLayout()
-        sheet_layout.addWidget(self.sheet_label)
-        sheet_layout.addWidget(self.sheet_combo)
-
+        # 主布局
         main_layout = QVBoxLayout()
-        main_layout.addLayout(folder_layout)
-        main_layout.addLayout(file_layout)
-        main_layout.addLayout(json_layout)
-        main_layout.addLayout(bd_layout)
-        main_layout.addLayout(sheet_layout)
+        main_layout.addWidget(jc_group)
+        main_layout.addWidget(bd_group)
         main_layout.addWidget(self.confirm_btn)
 
         self.setLayout(main_layout)
         self._load_from_settings()
 
-    def select_folder(self):
-        folder = QFileDialog.getExistingDirectory(self, '选择文件夹')
+    # ---------- JC 相关 ----------
+    def select_jc_folder(self):
+        folder = QFileDialog.getExistingDirectory(self, '选择HTML文件夹')
         if folder:
-            self.folder_line.setText(folder)
+            self.jc_folder_line.setText(folder)
 
-    def select_file(self):
-        file, _ = QFileDialog.getOpenFileName(self, '选择Excel文件', 
+    def select_jc_excel(self):
+        file, _ = QFileDialog.getOpenFileName(self, '选择JC Excel文件',
                                             filter='Excel Files (*.xlsx *.xls)')
         if file:
-            self.file_line.setText(file)
-            # 加载Excel文件的sheet名称
-            self.load_sheet_names(file)
-    
-    def load_sheet_names(self, excel_file):
-        """加载Excel文件中的所有sheet名称"""
-        try:
-            # 使用openpyxl加载工作簿（只读取sheet名称，不加载数据）
-            wb = load_workbook(filename=excel_file, read_only=True)
-            self.sheet_names = wb.sheetnames
-            
-            # 清空并更新下拉框
-            self.sheet_combo.clear()
-            self.sheet_combo.addItems(self.sheet_names)
-            self.sheet_combo.setEnabled(True)
-            
-            # 默认选择第一个sheet
-            if self.sheet_names:
-                self.sheet_combo.setCurrentIndex(0)
-                
-            logger.info(f"加载Excel文件: {excel_file}, 找到 {len(self.sheet_names)} 个sheet")
-            
-        except Exception as e:
-            logger.error(f"加载Excel文件失败: {e}")
-            QMessageBox.warning(self, "错误", f"无法读取Excel文件: {str(e)}")
-            self.sheet_combo.setEnabled(False)
+            self.jc_excel_line.setText(file)
+            self.load_jc_sheet_names(file)
 
-    def select_json(self):
-        file, _ = QFileDialog.getOpenFileName(self, '选择JSON文件',
+    def select_jc_json(self):
+        file, _ = QFileDialog.getOpenFileName(self, '选择JC JSON文件',
                                             filter='JSON Files (*.json)')
         if file:
-            self.json_line.setText(file)
+            self.jc_json_line.setText(file)
 
+    def load_jc_sheet_names(self, excel_file):
+        """加载JC Excel文件中的所有sheet名称"""
+        try:
+            wb = load_workbook(filename=excel_file, read_only=True)
+            self.jc_sheet_names = wb.sheetnames
+            self.jc_sheet_combo.clear()
+            self.jc_sheet_combo.addItems(self.jc_sheet_names)
+            self.jc_sheet_combo.setEnabled(True)
+            if self.jc_sheet_names:
+                self.jc_sheet_combo.setCurrentIndex(0)
+            logger.info(f"加载JC Excel: {excel_file}, 找到 {len(self.jc_sheet_names)} 个sheet")
+        except Exception as e:
+            logger.error(f"加载JC Excel文件失败: {e}")
+            QMessageBox.warning(self, "错误", f"无法读取JC Excel文件: {str(e)}")
+            self.jc_sheet_combo.setEnabled(False)
+
+    # ---------- BD 相关 ----------
     def select_bd_folder(self):
         folder = QFileDialog.getExistingDirectory(self, '选择北单文件夹')
         if folder:
             self.bd_folder_line.setText(folder)
 
+    def select_bd_excel(self):
+        file, _ = QFileDialog.getOpenFileName(self, '选择BD Excel文件',
+                                            filter='Excel Files (*.xlsx *.xls)')
+        if file:
+            self.bd_excel_line.setText(file)
+            self.load_bd_sheet_names(file)
+
+    def select_bd_json(self):
+        file, _ = QFileDialog.getOpenFileName(self, '选择BD JSON文件',
+                                            filter='JSON Files (*.json)')
+        if file:
+            self.bd_json_line.setText(file)
+
+    def load_bd_sheet_names(self, excel_file):
+        """加载BD Excel文件中的所有sheet名称"""
+        try:
+            wb = load_workbook(filename=excel_file, read_only=True)
+            self.bd_sheet_names = wb.sheetnames
+            self.bd_sheet_combo.clear()
+            self.bd_sheet_combo.addItems(self.bd_sheet_names)
+            self.bd_sheet_combo.setEnabled(True)
+            if self.bd_sheet_names:
+                self.bd_sheet_combo.setCurrentIndex(0)
+            logger.info(f"加载BD Excel: {excel_file}, 找到 {len(self.bd_sheet_names)} 个sheet")
+        except Exception as e:
+            logger.error(f"加载BD Excel文件失败: {e}")
+            QMessageBox.warning(self, "错误", f"无法读取BD Excel文件: {str(e)}")
+            self.bd_sheet_combo.setEnabled(False)
+
+    # ---------- 通用 ----------
     def on_confirm(self):
-        folder_path = self.folder_line.text()
-        file_path = self.file_line.text()
-        json_path = self.json_line.text()
+        jc_folder = self.jc_folder_line.text()
+        jc_excel = self.jc_excel_line.text()
+        jc_json = self.jc_json_line.text()
+        jc_sheet = self.jc_sheet_combo.currentText() if self.jc_sheet_combo.isEnabled() else None
+
         bd_folder = self.bd_folder_line.text()
-        selected_sheet = self.sheet_combo.currentText() if self.sheet_combo.isEnabled() else None
+        bd_excel = self.bd_excel_line.text()
+        bd_sheet = self.bd_sheet_combo.currentText() if self.bd_sheet_combo.isEnabled() else None
+        bd_json = self.bd_json_line.text()
 
-        if not file_path:
-            QMessageBox.warning(self, "警告", "必须选择Excel文件")
+        # 至少选择一个模式
+        if not jc_folder and not jc_excel and not bd_folder and not bd_excel:
+            QMessageBox.warning(self, "警告", "请至少填写 JC 或 BD 的路径信息")
             return
 
-        # 至少选择一个文件夹（HTML 或 北单）
-        if not folder_path and not bd_folder:
-            QMessageBox.warning(self, "警告", "请至少选择 HTML 文件夹路径或北单文件夹路径")
+        # JC Excel 必填（如果有 JC 文件夹）
+        if jc_folder and not jc_excel:
+            QMessageBox.warning(self, "警告", "选择了 JC HTML 文件夹，请选择对应的 JC Excel 文件")
             return
 
-        if not selected_sheet:
-            QMessageBox.warning(self, "警告", "请选择Excel sheet！")
+        # 如果填了 JC Excel，必须有 JC Sheet
+        if jc_excel and not jc_sheet:
+            QMessageBox.warning(self, "警告", "请为 JC Excel 选择 Sheet")
             return
 
-        self.selected_paths = (folder_path, file_path, json_path, selected_sheet, bd_folder)
-        self.accept()  # 使用accept()关闭对话框
+        # 如果填了 BD Excel，必须有 BD Sheet
+        if bd_excel and not bd_sheet:
+            QMessageBox.warning(self, "警告", "请为 BD Excel 选择 Sheet")
+            return
+
+        self.selected_paths = (jc_folder, jc_excel, jc_json, jc_sheet,
+                               bd_folder, bd_excel, bd_sheet, bd_json)
+        self.accept()
 
     def _load_from_settings(self):
         """从 config.ini 预填路径字段"""
         settings = QSettings("config.ini", QSettings.IniFormat)
-        folder = settings.value("paths/html_folder_path", "")
-        excel = settings.value("paths/excel_path", "")
-        json_p = settings.value("paths/json_path", "")
+
+        # JC
+        jc_folder = settings.value("paths/html_folder_path", "")
+        jc_excel = settings.value("paths/excel_path", "")
+        jc_json = settings.value("paths/json_path", "")
+        if jc_folder and os.path.exists(jc_folder):
+            self.jc_folder_line.setText(jc_folder)
+        if jc_excel and os.path.exists(jc_excel):
+            self.jc_excel_line.setText(jc_excel)
+            self.load_jc_sheet_names(jc_excel)
+        if jc_json and os.path.exists(jc_json):
+            self.jc_json_line.setText(jc_json)
+
+        # BD
         bd_folder = settings.value("paths/bd_folder_path", "")
-        if folder and os.path.exists(folder):
-            self.folder_line.setText(folder)
-        if excel and os.path.exists(excel):
-            self.file_line.setText(excel)
-            self.load_sheet_names(excel)
-        if json_p and os.path.exists(json_p):
-            self.json_line.setText(json_p)
+        bd_excel = settings.value("paths/bd_excel_path", "")
+        bd_sheet = settings.value("paths/bd_sheet_name", "")
+        bd_json = settings.value("paths/bd_json_path", "")
         if bd_folder and os.path.exists(bd_folder):
             self.bd_folder_line.setText(bd_folder)
+        if bd_excel and os.path.exists(bd_excel):
+            self.bd_excel_line.setText(bd_excel)
+            self.load_bd_sheet_names(bd_excel)
+        if bd_sheet and bd_sheet in self.bd_sheet_names:
+            idx = self.bd_sheet_combo.findText(bd_sheet)
+            if idx >= 0:
+                self.bd_sheet_combo.setCurrentIndex(idx)
+        if bd_json and os.path.exists(bd_json):
+            self.bd_json_line.setText(bd_json)
 
     def run(self):
         app = QApplication(sys.argv)
         self.show()
         app.exec_()
-        # 返回存储的路径 (folder, file, json, sheet)
-        return getattr(self, 'selected_paths', (None, None, None, None))
+        return getattr(self, 'selected_paths', (None, None, None, None, None, None, None, None))
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)

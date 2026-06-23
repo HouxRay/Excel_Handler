@@ -236,7 +236,10 @@ class EnhancedDataEditor(QMainWindow):
                  file_path:str = None,
                  json_path:str = None,
                  sheet_name:str = None,
-                 bd_file_path:str = None):
+                 bd_file_path:str = None,
+                 bd_excel_path:str = None,
+                 bd_sheet_name:str = None,
+                 bd_json_path:str = None):
         """
         top_data：队伍数据
         left_items：html文件名称
@@ -246,6 +249,9 @@ class EnhancedDataEditor(QMainWindow):
         json_path：json文件路径（用于二次整理时引入新数据）
         sheet_name：Excel sheet名称
         bd_file_path：北单HTML文件夹路径
+        bd_excel_path：BD专属Excel文件路径
+        bd_sheet_name：BD专属Sheet名称
+        bd_json_path：BD专属JSON文件路径
         """
         super().__init__()
         self.setWindowTitle("Doro统治世界")
@@ -276,6 +282,9 @@ class EnhancedDataEditor(QMainWindow):
         self.sheet_name = sheet_name  # 存储sheet名，供后台线程使用
         self.excel_path = excel_path  # 存储Excel路径，供BD模式导出使用
         self.bd_file_path = bd_file_path or ""  # 北单HTML文件夹路径
+        self.bd_excel_path = bd_excel_path or ""  # BD专属Excel路径
+        self.bd_sheet_name = bd_sheet_name or ""  # BD专属Sheet名称
+        self.bd_json_path = bd_json_path or ""  # BD专属JSON路径
         self.mapping = {}  # 先初始化空字典，HTML模式下才实际填充
 
         # 从 QSettings 加载持久化的 MATCH_DICT（有则用，无则默认）
@@ -351,6 +360,19 @@ class EnhancedDataEditor(QMainWindow):
             except Exception as e:
                 logger.exception("加载JSON数据时发生错误")
                 QMessageBox.warning(self, "警告", f"加载JSON数据失败：{str(e)}")
+
+        # 加载 BD 专属 JSON（如果存在）
+        if self.bd_json_path:
+            try:
+                import json
+                with open(self.bd_json_path, 'r', encoding='utf-8') as f:
+                    bd_json_data = json.load(f)
+                if bd_json_data and isinstance(bd_json_data, dict):
+                    self._bd_json_restore = bd_json_data
+                    logger.info(f"BD JSON 加载成功: {len(bd_json_data)} 场比赛")
+            except Exception as e:
+                logger.exception("加载BD JSON数据时发生错误")
+                QMessageBox.warning(self, "警告", f"加载BD JSON数据失败：{str(e)}")
         
         self.current_window = None
         self.is_dirty = False          # 未保存修改标记
@@ -369,7 +391,17 @@ class EnhancedDataEditor(QMainWindow):
         self._load_pic_config()        # 加载图片模式配置
         self.bd_categories = []        # BD 模式数据（延迟加载）
         self.bd_data_storage = {}
+        self._bd_export_rows = {}       # {code: start_row} 记录 BD导出起始行，防止重复写入
+
+        if self.data_mode == 'bd':
+            self._load_bd_config_with_progress()  # BD-only 启动时预加载 BD 数据
+
         self.init_ui()
+
+        # 如果是 BD 模式，init_ui 中 left_items 为空构建了空列表，需要重建
+        if self.data_mode == 'bd':
+            self._rebuild_radio_buttons()
+            self.refresh_table()
         
     def init_ui(self):
         main_widget = QWidget()
@@ -391,9 +423,10 @@ class EnhancedDataEditor(QMainWindow):
         self.html_mode_btn = QPushButton("HTML")
         self.pic_mode_btn = QPushButton("图片")
         self.bd_mode_btn = QPushButton("北单")
-        self.html_mode_btn.setStyleSheet(active_style)
-        self.pic_mode_btn.setStyleSheet(inactive_style)
-        self.bd_mode_btn.setStyleSheet(inactive_style)
+        # 初始按钮样式跟随 data_mode
+        self.html_mode_btn.setStyleSheet(active_style if self.data_mode == 'html' else inactive_style)
+        self.pic_mode_btn.setStyleSheet(active_style if self.data_mode == 'pic' else inactive_style)
+        self.bd_mode_btn.setStyleSheet(active_style if self.data_mode == 'bd' else inactive_style)
         self.html_mode_btn.clicked.connect(lambda: self._switch_data_mode('html'))
         self.pic_mode_btn.clicked.connect(lambda: self._switch_data_mode('pic'))
         self.bd_mode_btn.clicked.connect(lambda: self._switch_data_mode('bd'))
@@ -630,14 +663,14 @@ class EnhancedDataEditor(QMainWindow):
         self.bd_categories = []
         self.bd_data_storage = {}
         try:
-            excel_path = self.excel_path if hasattr(self, 'excel_path') and self.excel_path else ""
+            excel_path = self.bd_excel_path or (self.excel_path if hasattr(self, 'excel_path') and self.excel_path else "")
             html_dir = self.bd_file_path or self.file_path or ""
             logger.info(f"BD 加载: Excel = {excel_path}, BD HTML = {html_dir}")
             if not excel_path or not os.path.exists(excel_path):
                 return
             from openpyxl import load_workbook
             wb = load_workbook(excel_path, read_only=True)
-            sheet_name = self.sheet_name if hasattr(self, 'sheet_name') and self.sheet_name else ""
+            sheet_name = self.bd_sheet_name or (self.sheet_name if hasattr(self, 'sheet_name') and self.sheet_name else "")
             if sheet_name and sheet_name in wb.sheetnames:
                 ws = wb[sheet_name]
             else:
@@ -702,6 +735,18 @@ class EnhancedDataEditor(QMainWindow):
         except Exception as e:
             logger.exception("BD 配置加载失败")
 
+    def _load_bd_config_with_progress(self):
+        """带进度提示的 BD 配置加载"""
+        progress = QProgressDialog("正在加载北单模式...", None, 0, 0, self)
+        progress.setWindowTitle("加载中")
+        progress.setWindowModality(Qt.WindowModal)
+        progress.show()
+        QApplication.processEvents()
+        try:
+            self._load_bd_config()
+        finally:
+            progress.close()
+
     def _rebuild_radio_buttons(self):
         """根据当前 data_mode 重建左侧单选按钮列表"""
         # 清空按钮组
@@ -756,7 +801,7 @@ class EnhancedDataEditor(QMainWindow):
         self.data_mode = mode
 
         if mode == 'bd':
-            self._load_bd_config()
+            self._load_bd_config_with_progress()
         elif mode == 'html':
             self._rebuild_radio_buttons()
 
@@ -1211,11 +1256,11 @@ class EnhancedDataEditor(QMainWindow):
             if reply == QMessageBox.No:
                 return
 
-        excel_path = self.excel_path if hasattr(self, 'excel_path') and self.excel_path else ""
+        excel_path = self.bd_excel_path or (self.excel_path if hasattr(self, 'excel_path') and self.excel_path else "")
         if not excel_path:
             QMessageBox.warning(self, "警告", "未设置 BD Excel 路径，请先配置")
             return
-        sheet = self.sheet_name if hasattr(self, 'sheet_name') else None
+        sheet = self.bd_sheet_name or (self.sheet_name if hasattr(self, 'sheet_name') else None)
         writer = ExcelWriter(excel_path, sheet)
         col_map = find_bd_columns(writer.ws)
         if code not in col_map:
@@ -1223,17 +1268,32 @@ class EnhancedDataEditor(QMainWindow):
             return
 
         sc = col_map[code]["start_col"]
-        row = 2
-        while row <= writer.ws.max_row:
-            if writer.ws.cell(row=row, column=sc).value in (None, ""):
-                break
-            row += 1
+
+        # 检查是否已导出过（覆盖写入，防止重复追加）
+        prev_info = self._bd_export_rows.get(code)
+        if prev_info is not None:
+            start_row, prev_count = prev_info
+            row = start_row
+            # 清除旧数据（新数据可能比旧数据短，避免残留）
+            for r in range(row, row + prev_count):
+                for c in range(4):
+                    writer.ws.cell(row=r, column=sc + c).value = None
+        else:
+            # 首次导出：找第一个空行
+            start_row = 2
+            while start_row <= writer.ws.max_row:
+                if writer.ws.cell(row=start_row, column=sc).value in (None, ""):
+                    break
+                start_row += 1
+            row = start_row
 
         for score_set in scores:
             normalized = [apply_keyboard_mappings(str(s)) for s in score_set[:4]]
             writer.batch_write_list(row, sc, normalized)
             row += 1
 
+        # 记录本次导出的起始行和行数，下次导出覆盖写入
+        self._bd_export_rows[code] = (start_row, len(scores))
         writer.save()
         self.is_dirty = False
         self.logger.info(f"BD 导出完成: {selected_item} → {len(scores)} 行")
@@ -1376,11 +1436,11 @@ class EnhancedDataEditor(QMainWindow):
 
         dict_counter = {number: dict(counts.most_common()) for number, counts in stats.items()}
 
-        excel_path = self.excel_path if hasattr(self, 'excel_path') and self.excel_path else ""
+        excel_path = self.bd_excel_path or (self.excel_path if hasattr(self, 'excel_path') and self.excel_path else "")
         if not excel_path:
             QMessageBox.warning(self, "警告", "未设置 BD Excel 路径，请先配置")
             return
-        sheet = self.sheet_name if hasattr(self, 'sheet_name') else None
+        sheet = self.bd_sheet_name or (self.sheet_name if hasattr(self, 'sheet_name') else None)
         writer = ExcelWriter(excel_path, sheet)
         col_map = find_bd_columns(writer.ws)
         for code_num, info in col_map.items():
@@ -1472,32 +1532,42 @@ class EnhancedDataEditor(QMainWindow):
             result = path_selector.exec_()
             
             if result == QDialog.Accepted:
-                folder_path, excel_path, json_path, sheet_name, bd_folder = path_selector.selected_paths
+                (folder_path, excel_path, json_path, sheet_name,
+                 bd_folder, bd_excel, bd_sheet, bd_json) = path_selector.selected_paths
 
                 # 验证路径有效性
-                if not excel_path or not sheet_name:
-                    QMessageBox.critical(None, "错误", "必须选择有效的Excel文件和sheet")
-                    return
                 if not folder_path and not bd_folder:
                     QMessageBox.critical(None, "错误", "必须选择 HTML 文件夹或北单文件夹")
+                    return
+                if folder_path and not excel_path:
+                    QMessageBox.critical(None, "错误", "选择了 HTML 文件夹则必须选择 Excel 文件")
+                    return
+                if excel_path and not sheet_name:
+                    QMessageBox.critical(None, "错误", "必须选择有效的 Sheet")
                     return
 
                 # 保存到 QSettings
                 settings = QSettings("config.ini", QSettings.IniFormat)
                 if not settings.value("paths/mapping_path"):
                     settings.setValue("paths/mapping_path", "mapping/mapping_data.txt")
-                settings.setValue("paths/html_folder_path", folder_path)
-                settings.setValue("paths/excel_path", excel_path)
-                settings.setValue("paths/json_path", json_path)
-                settings.setValue("paths/sheet_name", sheet_name)
+                settings.setValue("paths/html_folder_path", folder_path or "")
+                settings.setValue("paths/excel_path", excel_path or "")
+                settings.setValue("paths/json_path", json_path or "")
+                settings.setValue("paths/sheet_name", sheet_name or "")
                 settings.setValue("paths/bd_folder_path", bd_folder or "")
+                settings.setValue("paths/bd_excel_path", bd_excel or "")
+                settings.setValue("paths/bd_sheet_name", bd_sheet or "")
+                settings.setValue("paths/bd_json_path", bd_json or "")
 
                 # 创建新的主窗口实例
                 new_window = EnhancedDataEditor(excel_path=excel_path,
                                                file_path=folder_path,
                                                json_path=json_path,
                                                sheet_name=sheet_name,
-                                               bd_file_path=bd_folder or "")
+                                               bd_file_path=bd_folder or "",
+                                               bd_excel_path=bd_excel or "",
+                                               bd_sheet_name=bd_sheet or "",
+                                               bd_json_path=bd_json or "")
                 new_window.show()
 
         except Exception as e:

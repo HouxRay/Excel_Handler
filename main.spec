@@ -4,7 +4,9 @@
 a = Analysis(
     ['main.py'],
     pathex=[],
-    binaries=[],
+    binaries=[
+        ('C:/Anaconda3/envs/qt310/Library/bin/libexpat.dll', '.'),
+    ],
     datas=[
         ('mapping/mapping_data.txt', 'mapping'),
         ('mapping/mapping_pic.txt', 'mapping'),
@@ -27,6 +29,8 @@ a = Analysis(
         'window.table_qt_2',
         'window.table_conbine',
         'window.settings_dialog',
+        'xml.etree.ElementTree',
+        'xml.parsers.expat',
     ],
     hookspath=[],
     hooksconfig={},
