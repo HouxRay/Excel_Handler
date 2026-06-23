@@ -6,6 +6,41 @@
 
 ---
 
+## 2026-06-23 — 代码模块拆分重构 (v3.1.0→v3.1.1)
+
+### 重构：数据处理逻辑模块化拆分
+
+**涉及文件：**
+- [window/table_qt.py](window/table_qt.py) — 1273 行（原 1682 行）
+- [src/BD_Handler.py](src/BD_Handler.py) — 扩展，新增 3 个函数
+- [src/data_loader.py](src/data_loader.py) — **新建**
+- [src/exporter.py](src/exporter.py) — **新建**
+- [src/log_setup.py](src/log_setup.py) — **新建**
+- [window/html_viewer.py](window/html_viewer.py) — **新建**
+
+将 `window/table_qt.py` 中的数据处理逻辑拆分到独立模块，该文件仅保留 Qt 界面相关内容（按钮事件、信号连接、UI 构建）：
+
+| 新模块 | 职责 | 移出内容 |
+|--------|------|---------|
+| `src/log_setup.py` | 日志配置 | `QTextEditLogger`、`setup_logger()`、`logger` 实例 |
+| `window/html_viewer.py` | HTML 查看器 | `NewWindow` 类 |
+| `src/data_loader.py` | 数据加载 | JSON 加载、图片配置、`reinitialize_data()` |
+| `src/exporter.py` | 导出/排序 | 写入操作收集、排序统计 |
+| `src/BD_Handler.py`（扩展） | BD 数据处理 | `load_bd_config()`、`export_bd_data()`、`sort_bd_data()` |
+
+### 接口设计原则
+
+- 新模块函数不依赖 `self`，所有需要的数据通过参数传入
+- 新模块函数不操作 Qt 组件，不弹 QMessageBox
+- Qt 对话框/消息提示保留在 `table_qt.py` 的事件处理中
+- 新模块函数有明确的返回值，不通过副作用修改外部状态
+
+### 版本号
+
+- `v3.1.0` → `v3.1.1`（代码重构）
+
+---
+
 ## 2026-06-23 — 路径选择器双Excel/双JSON支持；BD模式启动优化 (v3.0.0→v3.1.0)
 
 ### 功能升级：路径选择器双模式分组
