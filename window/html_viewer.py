@@ -12,6 +12,7 @@ class NewWindow(QDialog):
     def __init__(self, selected_item, html_base_path, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WA_DeleteOnClose)
+        self.setWindowFlags(self.windowFlags() | Qt.Window)
         try:
             self.setWindowTitle(f"HTML查看器 - {selected_item}")
             self.setGeometry(0, 0, 1100, 800)

@@ -220,6 +220,20 @@ class PathSelector(QDialog):
             label.setText('')
             label.setStyleSheet("color: #999; font-size: 10px;")
 
+    @staticmethod
+    def _get_last_dir(key: str, default: str = "") -> str:
+        """从 QSettings 读取上次浏览的目录"""
+        settings = QSettings("config.ini", QSettings.IniFormat)
+        return settings.value(f"last_dirs/{key}", default) or default
+
+    @staticmethod
+    def _save_last_dir(key: str, path: str):
+        """保存目录到 QSettings"""
+        parent = os.path.dirname(path)
+        if parent:
+            settings = QSettings("config.ini", QSettings.IniFormat)
+            settings.setValue(f"last_dirs/{key}", parent)
+
     def _browse_html_path(self, line_edit, type_label, title):
         """先让用户选择 ZIP 或文件夹，再打开对应对话框"""
         msg = QMessageBox(self)
@@ -233,17 +247,21 @@ class PathSelector(QDialog):
         clicked = msg.clickedButton()
 
         if clicked == btn_zip:
+            last_dir = self._get_last_dir("html_folder")
             file_path, _ = QFileDialog.getOpenFileName(
-                self, title, filter="ZIP 文件 (*.zip)"
+                self, title, directory=last_dir, filter="ZIP 文件 (*.zip)"
             )
             if file_path:
                 line_edit.setText(file_path)
                 self._update_path_indicator(file_path, type_label)
+                self._save_last_dir("html_folder", file_path)
         elif clicked == btn_folder:
-            folder = QFileDialog.getExistingDirectory(self, title)
+            last_dir = self._get_last_dir("html_folder")
+            folder = QFileDialog.getExistingDirectory(self, title, directory=last_dir)
             if folder:
                 line_edit.setText(folder)
                 self._update_path_indicator(folder, type_label)
+                self._save_last_dir("html_folder", folder)
 
     def select_jc_folder(self):
         self._browse_html_path(self.jc_folder_line, self.jc_path_type, '选择HTML文件夹或ZIP压缩包')
@@ -252,17 +270,23 @@ class PathSelector(QDialog):
         self._browse_html_path(self.bd_folder_line, self.bd_path_type, '选择北单文件夹或ZIP压缩包')
 
     def select_jc_excel(self):
+        last_dir = self._get_last_dir("excel")
         file, _ = QFileDialog.getOpenFileName(self, '选择JC Excel文件',
+                                            directory=last_dir,
                                             filter='Excel Files (*.xlsx *.xls)')
         if file:
             self.jc_excel_line.setText(file)
             self.load_jc_sheet_names(file)
+            self._save_last_dir("excel", file)
 
     def select_jc_json(self):
+        last_dir = self._get_last_dir("json")
         file, _ = QFileDialog.getOpenFileName(self, '选择JC JSON文件',
+                                            directory=last_dir,
                                             filter='JSON Files (*.json)')
         if file:
             self.jc_json_line.setText(file)
+            self._save_last_dir("json", file)
 
     def load_jc_sheet_names(self, excel_file):
         """加载JC Excel文件中的所有sheet名称"""
@@ -282,17 +306,23 @@ class PathSelector(QDialog):
 
     # ---------- BD 相关 ----------
     def select_bd_excel(self):
+        last_dir = self._get_last_dir("excel")
         file, _ = QFileDialog.getOpenFileName(self, '选择BD Excel文件',
+                                            directory=last_dir,
                                             filter='Excel Files (*.xlsx *.xls)')
         if file:
             self.bd_excel_line.setText(file)
             self.load_bd_sheet_names(file)
+            self._save_last_dir("excel", file)
 
     def select_bd_json(self):
+        last_dir = self._get_last_dir("json")
         file, _ = QFileDialog.getOpenFileName(self, '选择BD JSON文件',
+                                            directory=last_dir,
                                             filter='JSON Files (*.json)')
         if file:
             self.bd_json_line.setText(file)
+            self._save_last_dir("json", file)
 
     def load_bd_sheet_names(self, excel_file):
         """加载BD Excel文件中的所有sheet名称"""
@@ -347,39 +377,15 @@ class PathSelector(QDialog):
         self.accept()
 
     def _load_from_settings(self):
-        """从 config.ini 预填路径字段"""
+        """从 config.ini 加载非路径设置（如 mapping_path、sheet 匹配）"""
         settings = QSettings("config.ini", QSettings.IniFormat)
 
-        # JC
-        jc_folder = settings.value("paths/html_folder_path", "")
-        jc_excel = settings.value("paths/excel_path", "")
-        jc_json = settings.value("paths/json_path", "")
-        if jc_folder and os.path.exists(jc_folder):
-            self.jc_folder_line.setText(jc_folder)
-            self._update_path_indicator(jc_folder, self.jc_path_type)
-        if jc_excel and os.path.exists(jc_excel):
-            self.jc_excel_line.setText(jc_excel)
-            self.load_jc_sheet_names(jc_excel)
-        if jc_json and os.path.exists(jc_json):
-            self.jc_json_line.setText(jc_json)
-
-        # BD
-        bd_folder = settings.value("paths/bd_folder_path", "")
-        bd_excel = settings.value("paths/bd_excel_path", "")
+        # 只保留 sheet 名称的匹配（不预填路径）
         bd_sheet = settings.value("paths/bd_sheet_name", "")
-        bd_json = settings.value("paths/bd_json_path", "")
-        if bd_folder and os.path.exists(bd_folder):
-            self.bd_folder_line.setText(bd_folder)
-            self._update_path_indicator(bd_folder, self.bd_path_type)
-        if bd_excel and os.path.exists(bd_excel):
-            self.bd_excel_line.setText(bd_excel)
-            self.load_bd_sheet_names(bd_excel)
         if bd_sheet and bd_sheet in self.bd_sheet_names:
             idx = self.bd_sheet_combo.findText(bd_sheet)
             if idx >= 0:
                 self.bd_sheet_combo.setCurrentIndex(idx)
-        if bd_json and os.path.exists(bd_json):
-            self.bd_json_line.setText(bd_json)
 
     def run(self):
         app = QApplication(sys.argv)

@@ -34,22 +34,14 @@ def run():
         QMessageBox.critical(None, "错误", "必须选择 HTML 文件夹路径或北单文件夹路径")
         return
 
-    # 保存路径到 QSettings 配置
+    # 保存 mapping_path 默认值（如果尚未设置）
     from PyQt5.QtCore import QSettings
     settings = QSettings("config.ini", QSettings.IniFormat)
     if not settings.value("paths/mapping_path"):
         settings.setValue("paths/mapping_path", "mapping/mapping_data.txt")
-    settings.setValue("paths/html_folder_path", folder_path or "")
-    settings.setValue("paths/excel_path", excel_path or "")
-    settings.setValue("paths/json_path", json_path or "")
-    settings.setValue("paths/sheet_name", sheet_name or "")
-    settings.setValue("paths/bd_folder_path", bd_folder or "")
-    settings.setValue("paths/bd_excel_path", bd_excel or "")
-    settings.setValue("paths/bd_sheet_name", bd_sheet or "")
-    settings.setValue("paths/bd_json_path", bd_json or "")
 
     try:
-        # 显示主窗口
+        # 显示主窗口（恢复上次的位置和大小）
         main_window = EnhancedDataEditor(excel_path=excel_path,
                                          file_path=folder_path,
                                          json_path=json_path,
@@ -58,6 +50,10 @@ def run():
                                          bd_excel_path=bd_excel or "",
                                          bd_sheet_name=bd_sheet or "",
                                          bd_json_path=bd_json or "")
+        # 恢复上次的窗口几何
+        geom = settings.value("window/geometry")
+        if geom:
+            main_window.restoreGeometry(geom)
         main_window.show()
 
         # 退出时清理临时目录

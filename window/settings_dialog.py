@@ -273,6 +273,18 @@ class SettingsDialog(QDialog):
     def _mark_changed(self):
         self._changed = True
 
+    @staticmethod
+    def _get_last_dir(key: str, default: str = "") -> str:
+        settings = QSettings("config.ini", QSettings.IniFormat)
+        return settings.value(f"last_dirs/{key}", default) or default
+
+    @staticmethod
+    def _save_last_dir(key: str, path: str):
+        parent = os.path.dirname(path)
+        if parent:
+            settings = QSettings("config.ini", QSettings.IniFormat)
+            settings.setValue(f"last_dirs/{key}", parent)
+
     def _browse_folder(self, target_edit):
         """先让用户选择 ZIP 或文件夹，再打开对应对话框"""
         msg = QMessageBox(self)
@@ -286,27 +298,36 @@ class SettingsDialog(QDialog):
         clicked = msg.clickedButton()
 
         if clicked == btn_zip:
+            last_dir = self._get_last_dir("html_folder")
             file_path, _ = QFileDialog.getOpenFileName(
-                self, "选择ZIP压缩包", filter="ZIP 文件 (*.zip)"
+                self, "选择ZIP压缩包", directory=last_dir, filter="ZIP 文件 (*.zip)"
             )
             if file_path:
                 getattr(self, target_edit).setText(file_path)
+                self._save_last_dir("html_folder", file_path)
         elif clicked == btn_folder:
-            folder = QFileDialog.getExistingDirectory(self, "选择文件夹")
+            last_dir = self._get_last_dir("html_folder")
+            folder = QFileDialog.getExistingDirectory(self, "选择文件夹", directory=last_dir)
             if folder:
                 getattr(self, target_edit).setText(folder)
+                self._save_last_dir("html_folder", folder)
 
     def _browse_file(self, target_edit):
-        file, _ = QFileDialog.getOpenFileName(self, "选择文件", filter="All Files (*)")
+        last_dir = self._get_last_dir("json")
+        file, _ = QFileDialog.getOpenFileName(self, "选择文件", directory=last_dir, filter="All Files (*)")
         if file:
             getattr(self, target_edit).setText(file)
+            self._save_last_dir("json", file)
 
     def _browse_excel(self):
+        last_dir = self._get_last_dir("excel")
         file, _ = QFileDialog.getOpenFileName(self, "选择Excel文件",
+                                              directory=last_dir,
                                               filter="Excel Files (*.xlsx *.xls)")
         if file:
             self.excel_edit.setText(file)
             self._load_sheets()
+            self._save_last_dir("excel", file)
 
     def _load_sheets(self, init_sheet=None):
         excel_path = self.excel_edit.text()

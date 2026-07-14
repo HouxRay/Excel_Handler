@@ -88,7 +88,12 @@ class EnhancedDataEditor(QMainWindow):
         """
         super().__init__()
         self.setWindowTitle("Doro统治世界")
-        self.setGeometry(300, 300, 800, 600)
+        # 恢复上次关闭时的窗口位置和大小
+        geom = QSettings("config.ini", QSettings.IniFormat).value("window/geometry")
+        if geom:
+            self.restoreGeometry(geom)
+        else:
+            self.setGeometry(300, 300, 800, 600)
         
         # 设置窗口图标
         try:
@@ -1110,6 +1115,13 @@ class EnhancedDataEditor(QMainWindow):
             QMessageBox.critical(self, "错误", f"JSON导出失败：{str(e)}")
             return None
 
+    def closeEvent(self, event):
+        """关闭主窗口时保存窗口位置和大小"""
+        geom = self.saveGeometry()
+        settings = QSettings("config.ini", QSettings.IniFormat)
+        settings.setValue("window/geometry", geom)
+        super().closeEvent(event)
+
     def reload_paths(self):
         """
         重新选择路径并重新加载数据
@@ -1170,18 +1182,10 @@ class EnhancedDataEditor(QMainWindow):
                     QMessageBox.critical(None, "错误", "必须选择有效的 Sheet")
                     return
 
-                # 保存到 QSettings
+                # 保存默认 mapping_path（如果尚未设置）
                 settings = QSettings("config.ini", QSettings.IniFormat)
                 if not settings.value("paths/mapping_path"):
                     settings.setValue("paths/mapping_path", "mapping/mapping_data.txt")
-                settings.setValue("paths/html_folder_path", folder_path or "")
-                settings.setValue("paths/excel_path", excel_path or "")
-                settings.setValue("paths/json_path", json_path or "")
-                settings.setValue("paths/sheet_name", sheet_name or "")
-                settings.setValue("paths/bd_folder_path", bd_folder or "")
-                settings.setValue("paths/bd_excel_path", bd_excel or "")
-                settings.setValue("paths/bd_sheet_name", bd_sheet or "")
-                settings.setValue("paths/bd_json_path", bd_json or "")
 
                 # 创建新的主窗口实例
                 new_window = EnhancedDataEditor(excel_path=excel_path,
