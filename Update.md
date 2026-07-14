@@ -6,6 +6,68 @@
 
 ---
 
+## 2026-07-14 — ZIP 文件自动解压支持 + 路径/窗口体验优化 (v3.1.1→v3.2.0)
+
+### 功能升级：ZIP 文件自动解压
+
+**涉及文件：**
+- [src/zip_handler.py](src/zip_handler.py) — **新建**
+- [window/table_qt_2.py](window/table_qt_2.py)
+- [window/table_conbine.py](window/table_conbine.py)
+- [window/table_qt.py](window/table_qt.py)
+- [window/settings_dialog.py](window/settings_dialog.py)
+
+HTML 文件夹路径和北单文件夹路径支持直接选择 `.zip` 压缩包：
+
+- **弹窗选择：** 点击"浏览"后先弹窗让用户选择"ZIP 压缩包"或"文件夹"，不再自动回退，避免误操作
+- **路径类型指示：** 路径输入框旁自动显示 `📦ZIP`（橙色）或 `📁文件夹`（绿色）标签，手动输入也能自动识别
+- **中文编码修复：** 自动处理 ZIP 内的中文文件名编码（UTF-8 / CP936），解决文件名乱码问题
+- **解压隔离：** `.zip` 文件自动解压到系统临时目录 `%TEMP%/claude_zip_*`，退出时自动清理（双重保障：`atexit` + `app.aboutToQuit`）
+- **子目录提升：** 自动检测 ZIP 内单层包装目录并提升为有效根目录，确保非递归扫描（如 BD 模式 `os.listdir`）正常工作
+
+### 功能升级：路径选择器启动为空
+
+**涉及文件：** [window/table_qt_2.py](window/table_qt_2.py)、[window/table_conbine.py](window/table_conbine.py)
+
+- 每次启动时路径选择器所有字段为空，不再预填上一次的路径
+- 用户按需选择当次需要的路径，免去手动删除旧路径的操作
+
+### 功能升级：浏览对话框记住上次目录
+
+**涉及文件：** [window/table_qt_2.py](window/table_qt_2.py)、[window/settings_dialog.py](window/settings_dialog.py)
+
+- 在 `config.ini` 新增 `[last_dirs]` 分组，独立记录 HTML 文件夹、Excel、JSON 的上次浏览目录
+- 点击"浏览"从上次选择的目录开始，不再每次从软件根目录开始
+- 三种路径类型分别记录，互不干扰
+
+### 功能升级：窗口位置和大小记忆
+
+**涉及文件：** [window/table_qt.py](window/table_qt.py)、[window/table_conbine.py](window/table_conbine.py)
+
+- 主窗口关闭时自动保存位置和大小到 `config.ini`（`saveGeometry`)
+- 下次启动自动恢复到上次关闭时的位置和大小
+- 首次启动或配置不存在时回退到默认值（800×600，屏幕居中）
+
+### 功能优化：HTML 查看器独立最小化
+
+**涉及文件：** [window/html_viewer.py](window/html_viewer.py)
+
+- 为 HTML 查看器添加 `Qt.Window` 窗口标志
+- 最小化查看器时，主窗口不受影响
+- 最小化主窗口时，查看器随主窗口最小化
+
+### Bug 修复
+
+**涉及文件：** [window/table_qt.py](window/table_qt.py)
+
+- **`reload_paths()` 日志处理器残留导致崩溃：** 关闭旧窗口时未移除 `QTextEditLogger` 处理器，新窗口导出完成后触发已销毁的 QTextEdit 导致 `RuntimeError`。修复：关闭前清理处理器 + `_on_write_finished` 加防御性 try/except
+
+### 版本号
+
+- `v3.1.1` → `v3.2.0`（功能升级）
+
+---
+
 ## 2026-06-23 — 代码模块拆分重构 (v3.1.0→v3.1.1)
 
 ### 重构：数据处理逻辑模块化拆分
