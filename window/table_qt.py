@@ -18,7 +18,8 @@ from src.mapping_manager import apply_keyboard_mappings, get_keyboard_mappings
 from src.BD_Handler import parse_bd_detail, load_bd_config, export_bd_data, sort_bd_data
 from src.data_loader import load_pic_config, load_json_to_storage, load_bd_json, reinitialize_data
 from src.exporter import collect_export_write_ops, collect_sort_stats
-from src.log_setup import logger, setup_logger
+from src.log_setup import logger, setup_logger, QTextEditLogger
+from src.zip_handler import ensure_extracted
 from window.html_viewer import NewWindow
 from window.settings_dialog import SettingsDialog
 
@@ -1007,17 +1008,21 @@ class EnhancedDataEditor(QMainWindow):
 
     def _on_write_finished(self, success, message):
         """写入完成回调（主线程）"""
-        if hasattr(self, 'progress_dialog') and self.progress_dialog:
-            self.progress_dialog.close()
-            self.progress_dialog = None
+        try:
+            if hasattr(self, 'progress_dialog') and self.progress_dialog:
+                self.progress_dialog.close()
+                self.progress_dialog = None
 
-        if success:
-            self.is_dirty = False
-            logger.info(message)
-            self.log_output.append(f"✅ {message}")
-        else:
-            logger.error(message)
-            QMessageBox.critical(self, "错误", message)
+            if success:
+                self.is_dirty = False
+                logger.info(message)
+                if hasattr(self, 'log_output') and self.log_output:
+                    self.log_output.append(f"✅ {message}")
+            else:
+                logger.error(message)
+                QMessageBox.critical(self, "错误", message)
+        except RuntimeError:
+            pass  # 窗口已销毁，忽略回调
     
     def sort(self):
         """排序 - 内存统计在主线程，写入在后台线程。BD 模式使用专用排序路径。"""
@@ -1129,7 +1134,10 @@ class EnhancedDataEditor(QMainWindow):
             if reply != QMessageBox.Yes:
                 return
 
-            # 关闭当前窗口
+            # 关闭当前窗口前清理日志处理器（防止旧 QTextEdit 引用残留）
+            for h in list(logger.handlers):
+                if isinstance(h, QTextEditLogger):
+                    logger.removeHandler(h)
             self.close()
 
             # 重新运行路径选择器
@@ -1140,6 +1148,16 @@ class EnhancedDataEditor(QMainWindow):
             if result == QDialog.Accepted:
                 (folder_path, excel_path, json_path, sheet_name,
                  bd_folder, bd_excel, bd_sheet, bd_json) = path_selector.selected_paths
+
+                # ZIP 解压
+                try:
+                    if folder_path:
+                        folder_path = ensure_extracted(folder_path, logger)
+                    if bd_folder:
+                        bd_folder = ensure_extracted(bd_folder, logger)
+                except ValueError as e:
+                    QMessageBox.critical(None, "解压错误", str(e))
+                    return
 
                 # 验证路径有效性
                 if not folder_path and not bd_folder:
@@ -1216,6 +1234,8 @@ class EnhancedDataEditor(QMainWindow):
             return
 
         try:
+            # 如果是 .zip 路径则自动解压
+            html_folder = ensure_extracted(html_folder, logger)
             result = reinitialize_data(html_folder, excel_path, sheet_name, mapping_path, logger)
 
             self.get_info = result['get_info']

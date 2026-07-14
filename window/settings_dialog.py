@@ -274,9 +274,27 @@ class SettingsDialog(QDialog):
         self._changed = True
 
     def _browse_folder(self, target_edit):
-        folder = QFileDialog.getExistingDirectory(self, "选择文件夹")
-        if folder:
-            getattr(self, target_edit).setText(folder)
+        """先让用户选择 ZIP 或文件夹，再打开对应对话框"""
+        msg = QMessageBox(self)
+        msg.setWindowTitle("选择类型")
+        msg.setText("请选择要添加的路径类型：")
+        btn_zip = msg.addButton("📦 ZIP 压缩包", QMessageBox.ActionRole)
+        btn_folder = msg.addButton("📁 文件夹", QMessageBox.ActionRole)
+        msg.addButton("取消", QMessageBox.RejectRole)
+        msg.exec_()
+
+        clicked = msg.clickedButton()
+
+        if clicked == btn_zip:
+            file_path, _ = QFileDialog.getOpenFileName(
+                self, "选择ZIP压缩包", filter="ZIP 文件 (*.zip)"
+            )
+            if file_path:
+                getattr(self, target_edit).setText(file_path)
+        elif clicked == btn_folder:
+            folder = QFileDialog.getExistingDirectory(self, "选择文件夹")
+            if folder:
+                getattr(self, target_edit).setText(folder)
 
     def _browse_file(self, target_edit):
         file, _ = QFileDialog.getOpenFileName(self, "选择文件", filter="All Files (*)")

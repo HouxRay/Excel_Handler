@@ -80,10 +80,16 @@ class PathSelector(QDialog):
         jc_folder_layout = QHBoxLayout()
         self.jc_folder_label = QLabel('HTML文件夹路径:')
         self.jc_folder_line = QLineEdit()
+        self.jc_folder_line.textChanged.connect(
+            lambda t: self._update_path_indicator(t, self.jc_path_type))
+        self.jc_path_type = QLabel('')
+        self.jc_path_type.setFixedWidth(50)
+        self.jc_path_type.setStyleSheet("color: #999; font-size: 10px;")
         self.jc_folder_btn = QPushButton('浏览...')
         self.jc_folder_btn.clicked.connect(self.select_jc_folder)
         jc_folder_layout.addWidget(self.jc_folder_label)
         jc_folder_layout.addWidget(self.jc_folder_line)
+        jc_folder_layout.addWidget(self.jc_path_type)
         jc_folder_layout.addWidget(self.jc_folder_btn)
 
         # JC Excel
@@ -130,10 +136,16 @@ class PathSelector(QDialog):
         bd_folder_layout = QHBoxLayout()
         self.bd_folder_label = QLabel('北单文件夹路径:')
         self.bd_folder_line = QLineEdit()
+        self.bd_folder_line.textChanged.connect(
+            lambda t: self._update_path_indicator(t, self.bd_path_type))
+        self.bd_path_type = QLabel('')
+        self.bd_path_type.setFixedWidth(50)
+        self.bd_path_type.setStyleSheet("color: #999; font-size: 10px;")
         self.bd_folder_btn = QPushButton('浏览...')
         self.bd_folder_btn.clicked.connect(self.select_bd_folder)
         bd_folder_layout.addWidget(self.bd_folder_label)
         bd_folder_layout.addWidget(self.bd_folder_line)
+        bd_folder_layout.addWidget(self.bd_path_type)
         bd_folder_layout.addWidget(self.bd_folder_btn)
 
         # BD Excel
@@ -186,10 +198,58 @@ class PathSelector(QDialog):
         self._load_from_settings()
 
     # ---------- JC 相关 ----------
+    @staticmethod
+    def _get_path_type(path: str) -> str:
+        """判断路径是 ZIP 还是文件夹"""
+        if not path:
+            return ''
+        if path.lower().endswith('.zip'):
+            return 'ZIP'
+        return '文件夹'
+
+    def _update_path_indicator(self, path, label):
+        """更新路径类型指示标签"""
+        t = self._get_path_type(path)
+        if t == 'ZIP':
+            label.setText('📦ZIP')
+            label.setStyleSheet("color: #E65100; font-size: 10px; font-weight: bold;")
+        elif t == '文件夹':
+            label.setText('📁文件夹')
+            label.setStyleSheet("color: #2E7D32; font-size: 10px;")
+        else:
+            label.setText('')
+            label.setStyleSheet("color: #999; font-size: 10px;")
+
+    def _browse_html_path(self, line_edit, type_label, title):
+        """先让用户选择 ZIP 或文件夹，再打开对应对话框"""
+        msg = QMessageBox(self)
+        msg.setWindowTitle("选择类型")
+        msg.setText(f"{title}\n请选择要添加的路径类型：")
+        btn_zip = msg.addButton("📦 ZIP 压缩包", QMessageBox.ActionRole)
+        btn_folder = msg.addButton("📁 文件夹", QMessageBox.ActionRole)
+        msg.addButton("取消", QMessageBox.RejectRole)
+        msg.exec_()
+
+        clicked = msg.clickedButton()
+
+        if clicked == btn_zip:
+            file_path, _ = QFileDialog.getOpenFileName(
+                self, title, filter="ZIP 文件 (*.zip)"
+            )
+            if file_path:
+                line_edit.setText(file_path)
+                self._update_path_indicator(file_path, type_label)
+        elif clicked == btn_folder:
+            folder = QFileDialog.getExistingDirectory(self, title)
+            if folder:
+                line_edit.setText(folder)
+                self._update_path_indicator(folder, type_label)
+
     def select_jc_folder(self):
-        folder = QFileDialog.getExistingDirectory(self, '选择HTML文件夹')
-        if folder:
-            self.jc_folder_line.setText(folder)
+        self._browse_html_path(self.jc_folder_line, self.jc_path_type, '选择HTML文件夹或ZIP压缩包')
+
+    def select_bd_folder(self):
+        self._browse_html_path(self.bd_folder_line, self.bd_path_type, '选择北单文件夹或ZIP压缩包')
 
     def select_jc_excel(self):
         file, _ = QFileDialog.getOpenFileName(self, '选择JC Excel文件',
@@ -221,11 +281,6 @@ class PathSelector(QDialog):
             self.jc_sheet_combo.setEnabled(False)
 
     # ---------- BD 相关 ----------
-    def select_bd_folder(self):
-        folder = QFileDialog.getExistingDirectory(self, '选择北单文件夹')
-        if folder:
-            self.bd_folder_line.setText(folder)
-
     def select_bd_excel(self):
         file, _ = QFileDialog.getOpenFileName(self, '选择BD Excel文件',
                                             filter='Excel Files (*.xlsx *.xls)')
@@ -301,6 +356,7 @@ class PathSelector(QDialog):
         jc_json = settings.value("paths/json_path", "")
         if jc_folder and os.path.exists(jc_folder):
             self.jc_folder_line.setText(jc_folder)
+            self._update_path_indicator(jc_folder, self.jc_path_type)
         if jc_excel and os.path.exists(jc_excel):
             self.jc_excel_line.setText(jc_excel)
             self.load_jc_sheet_names(jc_excel)
@@ -314,6 +370,7 @@ class PathSelector(QDialog):
         bd_json = settings.value("paths/bd_json_path", "")
         if bd_folder and os.path.exists(bd_folder):
             self.bd_folder_line.setText(bd_folder)
+            self._update_path_indicator(bd_folder, self.bd_path_type)
         if bd_excel and os.path.exists(bd_excel):
             self.bd_excel_line.setText(bd_excel)
             self.load_bd_sheet_names(bd_excel)
