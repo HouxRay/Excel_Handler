@@ -1,4 +1,4 @@
-# ExcelHandler — Excel数据分析工具
+# ExcelHandler — Excel数据誊写工具
 
 一个基于 **PyQt5** 的桌面应用程序，用于读取、编辑和导出竞彩 & 北单体育数据分析结果。支持 JC（竞彩）和 BD（北单）双模式，各自独立配置数据源。通过选择 HTML 数据源和 Excel 模板，自动匹配数据并写入指定位置，支持多 Sheet 选择、数据排序、HTML 预览等功能。
 
