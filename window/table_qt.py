@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QScrollArea, QRadioButton, QTableWidget, QTableWidgetItem,
                              QHeaderView, QPushButton, QButtonGroup, QDialog, QLabel, QMessageBox,
                              QTextEdit, QProgressDialog, QStyledItemDelegate)
-from PyQt5.QtCore import Qt, QThread, QEvent, QSettings
+from PyQt5.QtCore import Qt, QThread, QEvent, QSettings, QTimer
 from PyQt5.QtGui import QIcon
 
 from src.Excel_Info import GetWriteInfo
@@ -221,6 +221,13 @@ class EnhancedDataEditor(QMainWindow):
         if self.data_mode == 'bd':
             self._rebuild_radio_buttons()
             self.refresh_table()
+
+        # Excel 占用状态检测定时器（每 2 秒检测一次）
+        self._excel_available = None  # None=未检测，True=可写，False=被占用
+        self._excel_check_timer = QTimer(self)
+        self._excel_check_timer.timeout.connect(self._check_excel_status)
+        self._excel_check_timer.start(2000)
+        self._check_excel_status()  # 启动时立即检测一次
         
     def init_ui(self):
         main_widget = QWidget()
@@ -436,6 +443,18 @@ class EnhancedDataEditor(QMainWindow):
         
         ######### 2025-4-16 新增  ########     
          
+        # Excel 占用状态指示灯
+        status_row = QHBoxLayout()
+        self.excel_status_dot = QLabel()
+        self.excel_status_dot.setFixedSize(14, 14)
+        self.excel_status_dot.setStyleSheet("background-color: #9E9E9E; border-radius: 7px;")
+        self.excel_status_label = QLabel("Excel 未检测")
+        self.excel_status_label.setStyleSheet("color: #666; font-size: 10px;")
+        status_row.addWidget(self.excel_status_dot)
+        status_row.addWidget(self.excel_status_label)
+        status_row.addStretch()
+        right_layout.addLayout(status_row)
+
         # 在右侧布局中添加日志输出区域
         self.log_output = QTextEdit()
         self.log_output.setReadOnly(True)  # 只读模式
@@ -466,6 +485,35 @@ class EnhancedDataEditor(QMainWindow):
         """捕获 print 输出并重定向到日志"""
         if text.strip():  # 只记录非空文本
             self.logger.info(text.strip())
+
+    def _check_excel_status(self):
+        """检测当前 Excel 文件是否可写（Windows 文件锁检测）"""
+        excel_path = self.bd_excel_path or self.excel_path
+        if not excel_path or not os.path.exists(excel_path):
+            self._set_excel_status(None)  # 灰色，文件不存在
+            return
+        try:
+            import msvcrt
+            with open(excel_path, 'r+b') as f:
+                msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+            self._set_excel_status(True)  # 可写 → 绿
+        except (PermissionError, OSError):
+            self._set_excel_status(False)  # 被占用 → 红
+
+    def _set_excel_status(self, available):
+        """更新指示灯状态"""
+        if available is True and self._excel_available is not True:
+            self._excel_available = True
+            self.excel_status_dot.setStyleSheet("background-color: #4CAF50; border-radius: 7px;")
+            self.excel_status_label.setText("Excel 可编辑")
+        elif available is False and self._excel_available is not False:
+            self._excel_available = False
+            self.excel_status_dot.setStyleSheet("background-color: #F44336; border-radius: 7px;")
+            self.excel_status_label.setText("Excel 被占用")
+        elif available is None and self._excel_available is not None:
+            self._excel_available = None
+            self.excel_status_dot.setStyleSheet("background-color: #9E9E9E; border-radius: 7px;")
+            self.excel_status_label.setText("Excel 未检测")
 
     def _load_pic_config(self):
         """加载图片模式配置（与 mapping_data.txt 同格式：excel值：类别名）"""
@@ -894,6 +942,10 @@ class EnhancedDataEditor(QMainWindow):
         """
         导出数据 - 主线程收集验证，后台线程写入（不阻塞UI）
         """
+        # Excel 被占用时拦截导出
+        if self._excel_available is False:
+            QMessageBox.warning(self, "警告", "Excel 文件被占用，请先关闭外部打开的 Excel 再导出")
+            return
         self.save_changes()
         selected_item = self.radio_group.checkedButton().text()
 
@@ -942,6 +994,10 @@ class EnhancedDataEditor(QMainWindow):
 
     def _export_bd(self, selected_item):
         """BD 模式导出 — 纵向追加写入，无需映射/MATCH_DICT"""
+        # Excel 被占用时拦截导出
+        if self._excel_available is False:
+            QMessageBox.warning(self, "警告", "Excel 文件被占用，请先关闭外部打开的 Excel 再导出")
+            return
         bd_info = self.bd_data_storage.get(selected_item, {})
         scores = bd_info.get("scores", [])
         code = bd_info.get("code", "")
@@ -1141,6 +1197,8 @@ class EnhancedDataEditor(QMainWindow):
 
     def closeEvent(self, event):
         """关闭主窗口时保存窗口位置和大小"""
+        if hasattr(self, '_excel_check_timer'):
+            self._excel_check_timer.stop()  # 停止 Excel 检测定时器
         geom = self.saveGeometry()
         settings = QSettings("config.ini", QSettings.IniFormat)
         settings.setValue("window/geometry", geom)
