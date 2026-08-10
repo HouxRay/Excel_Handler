@@ -327,8 +327,24 @@ class EnhancedDataEditor(QMainWindow):
         """)
         clear_btn.clicked.connect(self._clear_current_page)
 
+        exit_open_btn = QPushButton("📤 退出并打开Excel目录")
+        exit_open_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                font-weight: bold;
+                padding: 6px 12px;
+                border-radius: 4px;
+                border: 1px solid #45a049;
+            }
+            QPushButton:hover { background-color: #45a049; border: 1px solid #3d8b40; }
+            QPushButton:pressed { background-color: #3d8b40; }
+        """)
+        exit_open_btn.clicked.connect(self._exit_and_open_excel_dir)
+
         green_btn_layout.addWidget(reload_btn)
         green_btn_layout.addWidget(clear_btn)
+        green_btn_layout.addWidget(exit_open_btn)
         green_btn_layout.addStretch()
 
         # ── 橙色按钮行 ──
@@ -1101,7 +1117,7 @@ class EnhancedDataEditor(QMainWindow):
                     json.dump(export_data, f, ensure_ascii=False, indent=4)
                 logger.info(f"BD JSON 导出成功: {json_path} ({len(export_data)} 场比赛)")
                 self.is_dirty = False
-                return
+                return True
 
             # JC/HTML 模式（原有逻辑）
             # 转置为 code→category→scores 格式
@@ -1117,10 +1133,11 @@ class EnhancedDataEditor(QMainWindow):
                 json.dump(new_json_data, f, ensure_ascii=False, indent=4)
             logger.info(f"JSON文件导出成功: {json_path}")
             self.is_dirty = False
+            return True
         except Exception as e:
             logger.exception("JSON导出失败")
             QMessageBox.critical(self, "错误", f"JSON导出失败：{str(e)}")
-            return None
+            return False
 
     def closeEvent(self, event):
         """关闭主窗口时保存窗口位置和大小"""
@@ -1128,6 +1145,46 @@ class EnhancedDataEditor(QMainWindow):
         settings = QSettings("config.ini", QSettings.IniFormat)
         settings.setValue("window/geometry", geom)
         super().closeEvent(event)
+
+    def _open_excel_dir(self):
+        """在资源管理器中打开当前 Excel 所在目录"""
+        excel_path = self.excel_path or self.bd_excel_path
+        if not excel_path or not os.path.exists(excel_path):
+            QMessageBox.warning(self, "提示", "Excel 文件路径无效，无法打开目录")
+            return
+        dir_path = os.path.dirname(excel_path)
+        try:
+            os.startfile(dir_path)
+        except Exception as e:
+            QMessageBox.warning(self, "错误", f"打开目录失败: {str(e)}")
+
+    def _exit_and_open_excel_dir(self):
+        """退出并打开 Excel 所在目录（三选一确认）"""
+        reply = QMessageBox(self)
+        reply.setWindowTitle("退出选项")
+        reply.setText("请选择退出方式：")
+        btn_save_open = reply.addButton("💾 保存，退出并打开文件夹", QMessageBox.ActionRole)
+        btn_save_exit = reply.addButton("💾 保存并退出", QMessageBox.ActionRole)
+        btn_no_save = reply.addButton("🚪 退出不保存", QMessageBox.ActionRole)
+        reply.addButton("取消", QMessageBox.RejectRole)
+        reply.exec_()
+        clicked = reply.clickedButton()
+
+        if clicked == btn_save_open:
+            if self.export_json():
+                self._open_excel_dir()   # 先打开目录
+                self.close()             # 再关闭
+        elif clicked == btn_save_exit:
+            if self.export_json():
+                self.close()
+        elif clicked == btn_no_save:
+            confirm = QMessageBox.question(
+                self, "确认退出",
+                "该选项不保存已有内容，确定退出？",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+            )
+            if confirm == QMessageBox.Yes:
+                self.close()
 
     def reload_paths(self):
         """
