@@ -128,6 +128,10 @@ class EnhancedDataEditor(QMainWindow):
         self.bd_json_path = bd_json_path or ""  # BD专属JSON路径
         self.html_source_path = html_source_path or file_path or ""  # 原始路径（可能zip）
         self.bd_source_path = bd_source_path or bd_file_path or ""  # 原始BD路径
+        # 图片模式 txt 保存目录（软件根目录/txt，按日期分目录）
+        self.txt_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'txt'
+        )
         self.mapping = {}  # 先初始化空字典，HTML模式下才实际填充
 
         # 从 QSettings 加载持久化的 MATCH_DICT（有则用，无则默认）
@@ -551,6 +555,13 @@ class EnhancedDataEditor(QMainWindow):
         # 刷新表格
         self.refresh_table()
 
+    def _get_today_txt_path(self, category_name):
+        """返回当天 txt 文件的完整路径（软件目录/txt/YYYY-MM-DD/类别.txt）"""
+        today = datetime.now().strftime('%Y-%m-%d')
+        day_dir = os.path.join(self.txt_dir, today)
+        os.makedirs(day_dir, exist_ok=True)
+        return os.path.join(day_dir, f"{category_name}.txt")
+
     def _on_fill_from_txt(self):
         """填入数据：图片模式从txt，BD模式从HTML详情文件解析比分"""
         selected_item = self.radio_group.checkedButton().text()
@@ -559,13 +570,8 @@ class EnhancedDataEditor(QMainWindow):
             self._fill_bd_from_html(selected_item)
             return
 
-        # 图片模式（原有逻辑）
-        txt_dir = self.file_path or self.bd_file_path
-        if not txt_dir:
-            QMessageBox.warning(self, "警告", "未设置文件夹路径")
-            return
-
-        txt_path = os.path.join(txt_dir, f"{selected_item}.txt")
+        # 图片模式：从当天日期目录读取 txt
+        txt_path = self._get_today_txt_path(selected_item)
         if not os.path.exists(txt_path):
             QMessageBox.warning(self, "警告", f"未找到文件: {txt_path}")
             return
@@ -818,12 +824,8 @@ class EnhancedDataEditor(QMainWindow):
 
     def _show_pic_txt_dialog(self, selected_item):
         """Pic模式：可编辑的txt对话框，文件不存在时保存即创建"""
-        txt_dir = self.file_path or self.bd_file_path
-        if not txt_dir:
-            QMessageBox.warning(self, "警告", "未设置文件夹路径，请在路径选择器中设置 HTML 或北单文件夹")
-            return
-
-        txt_path = os.path.join(txt_dir, f"{selected_item}.txt")
+        # 保存到软件目录/txt/当天日期/类别.txt
+        txt_path = self._get_today_txt_path(selected_item)
 
         # 读取已有内容（不存在则为空）
         content = ""
@@ -1228,7 +1230,7 @@ class EnhancedDataEditor(QMainWindow):
             'bd_json_path': self.bd_json_path or "",
         }
 
-        dialog = SettingsDialog(current_paths, parent=self)
+        dialog = SettingsDialog(current_paths, parent=self, txt_dir=self.txt_dir)
         if dialog.exec_() == QDialog.Accepted:
             new_paths = dialog.get_paths()
             # 重载 MATCH_DICT 和键盘映射（可能在设置中已修改）

@@ -13,10 +13,11 @@ from src.mapping_manager import (get_match_dict, get_default_match_dict, save_ma
 class SettingsDialog(QDialog):
     """设置对话框：路径配置 + 映射关系管理"""
 
-    def __init__(self, current_paths: dict, parent=None):
+    def __init__(self, current_paths: dict, parent=None, txt_dir: str = ""):
         super().__init__(parent)
         self.setWindowTitle("设置")
-        self.setGeometry(400, 300, 650, 660)
+        self.setGeometry(400, 300, 650, 680)
+        self.txt_dir = txt_dir
 
         self.initial_paths = dict(current_paths)
         self.current_paths = dict(current_paths)
@@ -70,6 +71,18 @@ class SettingsDialog(QDialog):
         self._build_path_row(bd_layout, "BD JSON文件路径:", 'bd_json_path',
                              lambda: self._browse_file('bd_json_edit'))
         path_layout.addWidget(bd_group)
+
+        # -- 图片数据目录 --
+        txt_group = QGroupBox("图片数据")
+        txt_layout = QHBoxLayout(txt_group)
+        txt_layout.addWidget(QLabel("图片数据目录:"))
+        self.txt_dir_edit = QLineEdit(self.txt_dir)
+        self.txt_dir_edit.setReadOnly(True)
+        txt_layout.addWidget(self.txt_dir_edit)
+        open_txt_btn = QPushButton("打开目录")
+        open_txt_btn.clicked.connect(self._open_txt_dir)
+        txt_layout.addWidget(open_txt_btn)
+        path_layout.addWidget(txt_group)
 
         path_layout.addStretch()
         tabs.addTab(path_tab, "路径设置")
@@ -345,6 +358,16 @@ class SettingsDialog(QDialog):
             if folder:
                 getattr(self, target_edit).setText(folder)
                 self._save_last_dir("html_folder", folder)
+
+    def _open_txt_dir(self):
+        """在系统文件管理器中打开图片数据目录"""
+        if not self.txt_dir or not os.path.exists(self.txt_dir):
+            QMessageBox.warning(self, "提示", "图片数据目录不存在")
+            return
+        try:
+            os.startfile(self.txt_dir)
+        except Exception as e:
+            QMessageBox.warning(self, "错误", f"打开目录失败: {str(e)}")
 
     def _browse_file(self, target_edit):
         last_dir = self._get_last_dir("json")
