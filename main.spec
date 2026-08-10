@@ -53,7 +53,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='Excel誊写器3.2.0',
+    name='Excel誊写器3.3.0',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
