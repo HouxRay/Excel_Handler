@@ -72,7 +72,9 @@ class EnhancedDataEditor(QMainWindow):
                  bd_file_path:str = None,
                  bd_excel_path:str = None,
                  bd_sheet_name:str = None,
-                 bd_json_path:str = None):
+                 bd_json_path:str = None,
+                 html_source_path:str = None,
+                 bd_source_path:str = None):
         """
         top_data：队伍数据
         left_items：html文件名称
@@ -116,13 +118,16 @@ class EnhancedDataEditor(QMainWindow):
                 top_data = None
                 left_items = []
                 excel_name = {}
-        self.file_path = file_path  # 存储文件夹路径，供图片模式查找txt文件
+        self.file_path = file_path  # 存储文件夹路径（解压后目录），供图片模式查找txt文件
         self.sheet_name = sheet_name  # 存储sheet名，供后台线程使用
         self.excel_path = excel_path  # 存储Excel路径，供BD模式导出使用
-        self.bd_file_path = bd_file_path or ""  # 北单HTML文件夹路径
+        self.json_path = json_path  # 存储JSON路径
+        self.bd_file_path = bd_file_path or ""  # 北单HTML文件夹路径（解压后目录）
         self.bd_excel_path = bd_excel_path or ""  # BD专属Excel路径
         self.bd_sheet_name = bd_sheet_name or ""  # BD专属Sheet名称
         self.bd_json_path = bd_json_path or ""  # BD专属JSON路径
+        self.html_source_path = html_source_path or file_path or ""  # 原始路径（可能zip）
+        self.bd_source_path = bd_source_path or bd_file_path or ""  # 原始BD路径
         self.mapping = {}  # 先初始化空字典，HTML模式下才实际填充
 
         # 从 QSettings 加载持久化的 MATCH_DICT（有则用，无则默认）
@@ -1161,6 +1166,10 @@ class EnhancedDataEditor(QMainWindow):
                 (folder_path, excel_path, json_path, sheet_name,
                  bd_folder, bd_excel, bd_sheet, bd_json) = path_selector.selected_paths
 
+                # 保留原始路径（设置界面显示用）
+                folder_path_raw = folder_path
+                bd_folder_raw = bd_folder
+
                 # ZIP 解压
                 try:
                     if folder_path:
@@ -1195,7 +1204,9 @@ class EnhancedDataEditor(QMainWindow):
                                                bd_file_path=bd_folder or "",
                                                bd_excel_path=bd_excel or "",
                                                bd_sheet_name=bd_sheet or "",
-                                               bd_json_path=bd_json or "")
+                                               bd_json_path=bd_json or "",
+                                               html_source_path=folder_path_raw,
+                                               bd_source_path=bd_folder_raw)
                 new_window.show()
 
         except Exception as e:
@@ -1207,10 +1218,14 @@ class EnhancedDataEditor(QMainWindow):
         settings = QSettings("config.ini", QSettings.IniFormat)
         current_paths = {
             'mapping_path': settings.value("paths/mapping_path", "mapping/mapping_data.txt"),
-            'html_folder_path': settings.value("paths/html_folder_path", ""),
-            'excel_path': settings.value("paths/excel_path", ""),
-            'json_path': settings.value("paths/json_path", ""),
-            'sheet_name': settings.value("paths/sheet_name", ""),
+            'html_folder_path': self.html_source_path,
+            'excel_path': self.excel_path or "",
+            'json_path': self.json_path or "",
+            'sheet_name': self.sheet_name or "",
+            'bd_folder_path': self.bd_source_path,
+            'bd_excel_path': self.bd_excel_path or "",
+            'bd_sheet_name': self.bd_sheet_name or "",
+            'bd_json_path': self.bd_json_path or "",
         }
 
         dialog = SettingsDialog(current_paths, parent=self)
@@ -1223,11 +1238,20 @@ class EnhancedDataEditor(QMainWindow):
 
     def _reload_with_new_paths(self, new_paths: dict):
         """根据新路径重新初始化数据"""
-        html_folder = new_paths['html_folder_path']
-        excel_path = new_paths['excel_path']
-        json_path = new_paths['json_path']
-        mapping_path = new_paths['mapping_path']
+        html_folder = new_paths.get('html_folder_path', self.html_source_path)
+        excel_path = new_paths.get('excel_path', self.excel_path or "")
+        json_path = new_paths.get('json_path', self.json_path or "")
+        mapping_path = new_paths.get(
+            'mapping_path',
+            QSettings("config.ini", QSettings.IniFormat).value("paths/mapping_path", "mapping/mapping_data.txt")
+        )
         sheet_name = new_paths.get('sheet_name', self.sheet_name)
+
+        # BD 路径
+        bd_folder = new_paths.get('bd_folder_path', self.bd_source_path)
+        bd_excel = new_paths.get('bd_excel_path', self.bd_excel_path or "")
+        bd_sheet = new_paths.get('bd_sheet_name', self.bd_sheet_name or "")
+        bd_json = new_paths.get('bd_json_path', self.bd_json_path or "")
 
         if not html_folder or not excel_path:
             QMessageBox.warning(self, "警告", "HTML文件夹路径和Excel路径不能为空")
@@ -1238,12 +1262,20 @@ class EnhancedDataEditor(QMainWindow):
             return
 
         try:
-            # 如果是 .zip 路径则自动解压
+            # 如果是 .zip 路径则自动解压（JC 和 BD）
+            html_source = html_folder
             html_folder = ensure_extracted(html_folder, logger)
+            bd_source = bd_folder
+            bd_folder = ensure_extracted(bd_folder, logger)
+
             result = reinitialize_data(html_folder, excel_path, sheet_name, mapping_path, logger)
 
+            # 更新 JC 路径
+            self.html_source_path = html_source or ""
             self.get_info = result['get_info']
             self.file_path = html_folder
+            self.excel_path = excel_path or ""
+            self.json_path = json_path or ""
             self.sheet_name = sheet_name
             self.top_data = result['top_data']
             self.left_items = result['left_items']
@@ -1255,6 +1287,16 @@ class EnhancedDataEditor(QMainWindow):
             self.header_bases = result['header_bases']
             self.url = result['url']
             self.data_storage = result['data_storage']
+
+            # 更新 BD 路径
+            self.bd_source_path = bd_source or ""
+            self.bd_file_path = bd_folder or ""
+            self.bd_excel_path = bd_excel or ""
+            self.bd_sheet_name = bd_sheet or ""
+            self.bd_json_path = bd_json or ""
+            self._has_bd_folder = bool(self.bd_file_path)
+            if hasattr(self, 'bd_mode_btn'):
+                self.bd_mode_btn.setEnabled(self._has_bd_folder)
 
             # 重新加载图片模式配置
             self._load_pic_config()
@@ -1269,13 +1311,17 @@ class EnhancedDataEditor(QMainWindow):
             self._rebuild_radio_buttons()
             self.refresh_table()
 
-            # 保存路径到 QSettings
+            # 保存路径到 QSettings（用原始路径，非临时目录）
             settings = QSettings("config.ini", QSettings.IniFormat)
             settings.setValue("paths/mapping_path", mapping_path)
-            settings.setValue("paths/html_folder_path", html_folder)
+            settings.setValue("paths/html_folder_path", html_source)
             settings.setValue("paths/excel_path", excel_path)
             settings.setValue("paths/json_path", json_path)
             settings.setValue("paths/sheet_name", sheet_name)
+            settings.setValue("paths/bd_folder_path", bd_source)
+            settings.setValue("paths/bd_excel_path", bd_excel)
+            settings.setValue("paths/bd_sheet_name", bd_sheet)
+            settings.setValue("paths/bd_json_path", bd_json)
 
             self.logger.info("设置已更新，数据已重新加载")
 

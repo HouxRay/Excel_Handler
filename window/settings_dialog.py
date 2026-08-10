@@ -16,7 +16,7 @@ class SettingsDialog(QDialog):
     def __init__(self, current_paths: dict, parent=None):
         super().__init__(parent)
         self.setWindowTitle("设置")
-        self.setGeometry(400, 300, 650, 560)
+        self.setGeometry(400, 300, 650, 660)
 
         self.initial_paths = dict(current_paths)
         self.current_paths = dict(current_paths)
@@ -29,23 +29,47 @@ class SettingsDialog(QDialog):
         path_tab = QWidget()
         path_layout = QVBoxLayout(path_tab)
 
-        self._build_path_row(path_layout, "映射文件路径:", 'mapping_path',
+        # -- JC 模式 --
+        jc_group = QGroupBox("JC模式")
+        jc_layout = QVBoxLayout(jc_group)
+        self._build_path_row(jc_layout, "映射文件路径:", 'mapping_path',
                              lambda: self._browse_file('mapping_edit'))
-        self._build_path_row(path_layout, "HTML文件夹路径:", 'html_folder_path',
+        self._build_path_row(jc_layout, "HTML文件夹路径:", 'html_folder_path',
                              lambda: self._browse_folder('html_edit'))
-        self._build_path_row(path_layout, "Excel文件路径:", 'excel_path',
-                             self._browse_excel)
+        self._build_path_row(jc_layout, "Excel文件路径:", 'excel_path',
+                             lambda: self._browse_excel('excel_edit', 'sheet_combo'))
 
-        sheet_layout = QHBoxLayout()
-        sheet_layout.addWidget(QLabel("选择Sheet:"))
+        jc_sheet_layout = QHBoxLayout()
+        jc_sheet_layout.addWidget(QLabel("选择Sheet:"))
         self.sheet_combo = QComboBox()
         self.sheet_combo.setEnabled(False)
-        sheet_layout.addWidget(self.sheet_combo)
-        sheet_layout.addStretch()
-        path_layout.addLayout(sheet_layout)
+        jc_sheet_layout.addWidget(self.sheet_combo)
+        jc_sheet_layout.addStretch()
+        jc_layout.addLayout(jc_sheet_layout)
 
-        self._build_path_row(path_layout, "JSON文件路径:", 'json_path',
+        self._build_path_row(jc_layout, "JSON文件路径:", 'json_path',
                              lambda: self._browse_file('json_edit'))
+        path_layout.addWidget(jc_group)
+
+        # -- BD 模式 --
+        bd_group = QGroupBox("北单模式")
+        bd_layout = QVBoxLayout(bd_group)
+        self._build_path_row(bd_layout, "北单文件夹路径:", 'bd_folder_path',
+                             lambda: self._browse_folder('bd_folder_edit'))
+        self._build_path_row(bd_layout, "BD Excel文件路径:", 'bd_excel_path',
+                             lambda: self._browse_excel('bd_excel_edit', 'bd_sheet_combo'))
+
+        bd_sheet_layout = QHBoxLayout()
+        bd_sheet_layout.addWidget(QLabel("选择Sheet:"))
+        self.bd_sheet_combo = QComboBox()
+        self.bd_sheet_combo.setEnabled(False)
+        bd_sheet_layout.addWidget(self.bd_sheet_combo)
+        bd_sheet_layout.addStretch()
+        bd_layout.addLayout(bd_sheet_layout)
+
+        self._build_path_row(bd_layout, "BD JSON文件路径:", 'bd_json_path',
+                             lambda: self._browse_file('bd_json_edit'))
+        path_layout.addWidget(bd_group)
 
         path_layout.addStretch()
         tabs.addTab(path_tab, "路径设置")
@@ -129,11 +153,21 @@ class SettingsDialog(QDialog):
         self.html_edit.textChanged.connect(self._mark_changed)
         self.excel_edit.textChanged.connect(self._mark_changed)
         self.json_edit.textChanged.connect(self._mark_changed)
+        self.bd_folder_edit.textChanged.connect(self._mark_changed)
+        self.bd_excel_edit.textChanged.connect(self._mark_changed)
+        self.bd_json_edit.textChanged.connect(self._mark_changed)
 
-        # Excel 路径变化时加载 sheet
-        self.excel_edit.editingFinished.connect(self._load_sheets)
+        # Excel 路径变化时加载 sheet（JC + BD）
+        self.excel_edit.editingFinished.connect(
+            lambda: self._load_sheets(self.excel_edit, self.sheet_combo))
+        self.bd_excel_edit.editingFinished.connect(
+            lambda: self._load_sheets(self.bd_excel_edit, self.bd_sheet_combo))
         if current_paths.get('excel_path'):
-            self._load_sheets(init_sheet=current_paths.get('sheet_name', ''))
+            self._load_sheets(self.excel_edit, self.sheet_combo,
+                              init_sheet=current_paths.get('sheet_name', ''))
+        if current_paths.get('bd_excel_path'):
+            self._load_sheets(self.bd_excel_edit, self.bd_sheet_combo,
+                              init_sheet=current_paths.get('bd_sheet_name', ''))
 
         # 填充映射表格
         self._populate_table(self.match_table, get_match_dict())
@@ -151,17 +185,17 @@ class SettingsDialog(QDialog):
         row.addWidget(edit)
         row.addWidget(btn)
         parent_layout.addLayout(row)
-        setattr(self, f"{key}_edit" if not hasattr(self, f"{key}_edit") else "_",
-                edit)
         # Store edit widgets for access
-        if key == 'mapping_path':
-            self.mapping_edit = edit
-        elif key == 'html_folder_path':
-            self.html_edit = edit
-        elif key == 'excel_path':
-            self.excel_edit = edit
-        elif key == 'json_path':
-            self.json_edit = edit
+        edit_map = {
+            'mapping_path': 'mapping_edit',
+            'html_folder_path': 'html_edit',
+            'excel_path': 'excel_edit',
+            'json_path': 'json_edit',
+            'bd_folder_path': 'bd_folder_edit',
+            'bd_excel_path': 'bd_excel_edit',
+            'bd_json_path': 'bd_json_edit',
+        }
+        setattr(self, edit_map.get(key, f"{key}_edit"), edit)
 
     # ---- Mapping tab helpers ----
 
@@ -319,40 +353,40 @@ class SettingsDialog(QDialog):
             getattr(self, target_edit).setText(file)
             self._save_last_dir("json", file)
 
-    def _browse_excel(self):
+    def _browse_excel(self, edit_attr, combo_attr):
         last_dir = self._get_last_dir("excel")
         file, _ = QFileDialog.getOpenFileName(self, "选择Excel文件",
                                               directory=last_dir,
                                               filter="Excel Files (*.xlsx *.xls)")
         if file:
-            self.excel_edit.setText(file)
-            self._load_sheets()
+            getattr(self, edit_attr).setText(file)
+            self._load_sheets(getattr(self, edit_attr), getattr(self, combo_attr))
             self._save_last_dir("excel", file)
 
-    def _load_sheets(self, init_sheet=None):
-        excel_path = self.excel_edit.text()
+    def _load_sheets(self, edit, combo, init_sheet=None):
+        excel_path = edit.text()
         if not excel_path or not os.path.exists(excel_path):
-            self.sheet_combo.clear()
-            self.sheet_combo.setEnabled(False)
+            combo.clear()
+            combo.setEnabled(False)
             return
         try:
             wb = load_workbook(filename=excel_path, read_only=True)
             sheet_names = wb.sheetnames
-            self.sheet_combo.clear()
-            self.sheet_combo.addItems(sheet_names)
-            self.sheet_combo.setEnabled(True)
+            combo.clear()
+            combo.addItems(sheet_names)
+            combo.setEnabled(True)
             if init_sheet and init_sheet in sheet_names:
-                self.sheet_combo.setCurrentText(init_sheet)
+                combo.setCurrentText(init_sheet)
             elif sheet_names:
-                self.sheet_combo.setCurrentIndex(0)
+                combo.setCurrentIndex(0)
         except Exception:
-            self.sheet_combo.clear()
-            self.sheet_combo.setEnabled(False)
+            combo.clear()
+            combo.setEnabled(False)
 
     def _on_apply(self):
         """保存所有设置到 QSettings 并接受对话框"""
         settings = QSettings("config.ini", QSettings.IniFormat)
-        # 路径设置
+        # JC 路径设置
         settings.setValue("paths/mapping_path", self.mapping_edit.text())
         settings.setValue("paths/html_folder_path", self.html_edit.text())
         settings.setValue("paths/excel_path", self.excel_edit.text())
@@ -360,12 +394,23 @@ class SettingsDialog(QDialog):
         sheet = self.sheet_combo.currentText() if self.sheet_combo.isEnabled() else ""
         settings.setValue("paths/sheet_name", sheet)
 
+        # BD 路径设置
+        settings.setValue("paths/bd_folder_path", self.bd_folder_edit.text())
+        settings.setValue("paths/bd_excel_path", self.bd_excel_edit.text())
+        bd_sheet = self.bd_sheet_combo.currentText() if self.bd_sheet_combo.isEnabled() else ""
+        settings.setValue("paths/bd_sheet_name", bd_sheet)
+        settings.setValue("paths/bd_json_path", self.bd_json_edit.text())
+
         self.current_paths = {
             'mapping_path': self.mapping_edit.text(),
             'html_folder_path': self.html_edit.text(),
             'excel_path': self.excel_edit.text(),
             'json_path': self.json_edit.text(),
             'sheet_name': sheet,
+            'bd_folder_path': self.bd_folder_edit.text(),
+            'bd_excel_path': self.bd_excel_edit.text(),
+            'bd_sheet_name': bd_sheet,
+            'bd_json_path': self.bd_json_edit.text(),
         }
 
         # 映射设置

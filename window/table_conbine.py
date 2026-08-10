@@ -18,6 +18,10 @@ def run():
 
     folder_path, excel_path, json_path, sheet_name, bd_folder, bd_excel, bd_sheet, bd_json = path_selector.selected_paths
 
+    # 保留原始路径（用于设置界面显示，可能是 zip 或目录）
+    folder_path_raw = folder_path
+    bd_folder_raw = bd_folder
+
     # 第二步：如果是 .zip 文件，自动解压到临时目录
     try:
         if folder_path:
@@ -49,7 +53,9 @@ def run():
                                          bd_file_path=bd_folder or "",
                                          bd_excel_path=bd_excel or "",
                                          bd_sheet_name=bd_sheet or "",
-                                         bd_json_path=bd_json or "")
+                                         bd_json_path=bd_json or "",
+                                         html_source_path=folder_path_raw,
+                                         bd_source_path=bd_folder_raw)
         # 恢复上次的窗口几何
         geom = settings.value("window/geometry")
         if geom:
