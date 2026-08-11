@@ -46,8 +46,8 @@ class ExcelHandler:
             # 获取当前基准的四列范围
             base_cols = [current_col + i for i in range(4)]
 
-            # 检查是否超出表格范围
-            if base_cols[-1] > self.ws.max_column:
+            # 检查是否超出表格范围（用第1列序号判断，允许最后一组第4列为空/超界）
+            if base_cols[0] > self.ws.max_column:
                 break
 
             # 获取基准四列的值
