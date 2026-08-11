@@ -1,17 +1,45 @@
 from window.table_qt import EnhancedDataEditor
 from window.table_qt_2 import PathSelector
 from PyQt5.QtWidgets import QApplication
-from PyQt5.QtWidgets import QApplication, QMessageBox, QDialog
+from PyQt5.QtWidgets import QApplication, QMessageBox, QDialog, QLabel, QVBoxLayout
+from PyQt5.QtCore import Qt
 from src.zip_handler import ensure_extracted, cleanup_temp_dirs
 from src.log_setup import logger
 import sys
 
+
+def _show_startup_splash(parent=None):
+    """显示启动加载提示窗口"""
+    splash = QDialog(parent)
+    splash.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+    splash.setFixedSize(240, 120)
+    layout = QVBoxLayout(splash)
+    label = QLabel("🚀 正在启动...")
+    label.setAlignment(Qt.AlignCenter)
+    label.setStyleSheet("font-size: 16px; font-weight: bold; color: #333;")
+    layout.addWidget(label)
+    # 居中显示
+    screen = QApplication.primaryScreen()
+    if screen:
+        geo = screen.availableGeometry()
+        splash.move(geo.center() - splash.rect().center())
+    splash.show()
+    QApplication.processEvents()
+    return splash
+
+
 def run():
     app = QApplication(sys.argv)
+
+    # 显示启动加载提示
+    splash = _show_startup_splash()
 
     # 第一步：获取路径
     path_selector = PathSelector()
     result = path_selector.exec_()  # 使用exec_()模态显示对话框
+
+    if splash:
+        splash.close()  # 路径选择器弹出后关闭加载提示
 
     if result != QDialog.Accepted:
         return  # 用户取消选择
