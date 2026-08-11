@@ -38,11 +38,19 @@ def run():
         QMessageBox.critical(None, "错误", "必须选择 HTML 文件夹路径或北单文件夹路径")
         return
 
-    # 保存 mapping_path 默认值（如果尚未设置）
+    # 保存路径到 config.ini（供下次"自动填入"使用）
     from PyQt5.QtCore import QSettings
     settings = QSettings("config.ini", QSettings.IniFormat)
     if not settings.value("paths/mapping_path"):
         settings.setValue("paths/mapping_path", "mapping/mapping_data.txt")
+    settings.setValue("paths/html_folder_path", folder_path_raw or "")
+    settings.setValue("paths/excel_path", excel_path or "")
+    settings.setValue("paths/json_path", json_path or "")
+    settings.setValue("paths/sheet_name", sheet_name or "")
+    settings.setValue("paths/bd_folder_path", bd_folder_raw or "")
+    settings.setValue("paths/bd_excel_path", bd_excel or "")
+    settings.setValue("paths/bd_sheet_name", bd_sheet or "")
+    settings.setValue("paths/bd_json_path", bd_json or "")
 
     try:
         # 显示主窗口（恢复上次的位置和大小）

@@ -1308,10 +1308,18 @@ class EnhancedDataEditor(QMainWindow):
                     QMessageBox.critical(None, "错误", "必须选择有效的 Sheet")
                     return
 
-                # 保存默认 mapping_path（如果尚未设置）
+                # 保存路径到 config.ini（供下次"自动填入"使用）
                 settings = QSettings("config.ini", QSettings.IniFormat)
                 if not settings.value("paths/mapping_path"):
                     settings.setValue("paths/mapping_path", "mapping/mapping_data.txt")
+                settings.setValue("paths/html_folder_path", folder_path_raw or "")
+                settings.setValue("paths/excel_path", excel_path or "")
+                settings.setValue("paths/json_path", json_path or "")
+                settings.setValue("paths/sheet_name", sheet_name or "")
+                settings.setValue("paths/bd_folder_path", bd_folder_raw or "")
+                settings.setValue("paths/bd_excel_path", bd_excel or "")
+                settings.setValue("paths/bd_sheet_name", bd_sheet or "")
+                settings.setValue("paths/bd_json_path", bd_json or "")
 
                 # 创建新的主窗口实例
                 new_window = EnhancedDataEditor(excel_path=excel_path,
