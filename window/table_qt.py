@@ -886,6 +886,24 @@ class EnhancedDataEditor(QMainWindow):
             except:
                 QMessageBox.warning(self, "警告", "文件路径不存在，或者文件名称错误")
 
+    def _show_reload_splash(self):
+        """重新选择路径后显示数据读取加载提示"""
+        splash = QDialog(None)
+        splash.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        splash.setFixedSize(240, 120)
+        layout = QVBoxLayout(splash)
+        label = QLabel("📊 正在读取数据...")
+        label.setAlignment(Qt.AlignCenter)
+        label.setStyleSheet("font-size: 15px; font-weight: bold; color: #333;")
+        layout.addWidget(label)
+        screen = QApplication.primaryScreen()
+        if screen:
+            geo = screen.availableGeometry()
+            splash.move(geo.center() - splash.rect().center())
+        splash.show()
+        QApplication.processEvents()
+        return splash
+
     def _show_pic_txt_dialog(self, selected_item):
         """Pic模式：可编辑的txt对话框，文件不存在时保存即创建"""
         # 保存到软件目录/txt/当天日期/类别.txt
@@ -1287,6 +1305,9 @@ class EnhancedDataEditor(QMainWindow):
                 folder_path_raw = folder_path
                 bd_folder_raw = bd_folder
 
+                # 显示数据读取加载提示
+                data_splash = self._show_reload_splash()
+
                 # ZIP 解压
                 try:
                     if folder_path:
@@ -1294,17 +1315,21 @@ class EnhancedDataEditor(QMainWindow):
                     if bd_folder:
                         bd_folder = ensure_extracted(bd_folder, logger)
                 except ValueError as e:
+                    data_splash.close()
                     QMessageBox.critical(None, "解压错误", str(e))
                     return
 
                 # 验证路径有效性
                 if not folder_path and not bd_folder:
+                    data_splash.close()
                     QMessageBox.critical(None, "错误", "必须选择 HTML 文件夹或北单文件夹")
                     return
                 if folder_path and not excel_path:
+                    data_splash.close()
                     QMessageBox.critical(None, "错误", "选择了 HTML 文件夹则必须选择 Excel 文件")
                     return
                 if excel_path and not sheet_name:
+                    data_splash.close()
                     QMessageBox.critical(None, "错误", "必须选择有效的 Sheet")
                     return
 
@@ -1333,6 +1358,8 @@ class EnhancedDataEditor(QMainWindow):
                                                html_source_path=folder_path_raw,
                                                bd_source_path=bd_folder_raw)
                 new_window.show()
+                # 新窗口就绪后关闭加载提示
+                data_splash.close()
 
         except Exception as e:
             logger.exception("重新加载路径时发生错误")

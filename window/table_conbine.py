@@ -8,15 +8,15 @@ from src.log_setup import logger
 import sys
 
 
-def _show_startup_splash(parent=None):
-    """显示启动加载提示窗口"""
+def _show_startup_splash(parent=None, message="🚀 正在启动..."):
+    """显示加载提示窗口"""
     splash = QDialog(parent)
     splash.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
     splash.setFixedSize(240, 120)
     layout = QVBoxLayout(splash)
-    label = QLabel("🚀 正在启动...")
+    label = QLabel(message)
     label.setAlignment(Qt.AlignCenter)
-    label.setStyleSheet("font-size: 16px; font-weight: bold; color: #333;")
+    label.setStyleSheet("font-size: 15px; font-weight: bold; color: #333;")
     layout.addWidget(label)
     # 居中显示
     screen = QApplication.primaryScreen()
@@ -36,10 +36,10 @@ def run():
 
     # 第一步：获取路径
     path_selector = PathSelector()
-    result = path_selector.exec_()  # 使用exec_()模态显示对话框
-
+    # 路径选择器弹出前关闭加载提示（避免被模态对话框遮挡悬顶）
     if splash:
-        splash.close()  # 路径选择器弹出后关闭加载提示
+        splash.close()
+    result = path_selector.exec_()  # 使用exec_()模态显示对话框
 
     if result != QDialog.Accepted:
         return  # 用户取消选择
@@ -50,6 +50,9 @@ def run():
     folder_path_raw = folder_path
     bd_folder_raw = bd_folder
 
+    # 显示数据读取加载提示（路径选择确认后 → 主窗口就绪前）
+    data_splash = _show_startup_splash(message="📊 正在读取数据...")
+
     # 第二步：如果是 .zip 文件，自动解压到临时目录
     try:
         if folder_path:
@@ -57,12 +60,14 @@ def run():
         if bd_folder:
             bd_folder = ensure_extracted(bd_folder, logger)
     except ValueError as e:
+        data_splash.close()
         QMessageBox.critical(None, "解压错误", str(e))
         return
 
     # 验证路径有效性
     # JC Excel 非必需（BD-only 场景），但 sheet 在提供了 Excel 时必需
     if not folder_path and not bd_folder:
+        data_splash.close()
         QMessageBox.critical(None, "错误", "必须选择 HTML 文件夹路径或北单文件夹路径")
         return
 
@@ -98,12 +103,16 @@ def run():
             main_window.restoreGeometry(geom)
         main_window.show()
 
+        # 主窗口就绪后关闭数据加载提示
+        data_splash.close()
+
         # 退出时清理临时目录
         app.aboutToQuit.connect(lambda: cleanup_temp_dirs(logger))
 
         sys.exit(app.exec_())
 
     except Exception as e:
+        data_splash.close()
         QMessageBox.critical(None, "初始化错误", f"初始化失败: {str(e)}")
 
 if __name__ == "__main__":
