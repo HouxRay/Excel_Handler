@@ -715,9 +715,23 @@ class EnhancedDataEditor(QMainWindow):
         if ext in ('.png', '.jpg', '.jpeg', '.bmp'):
             analyzer = ai_handler.extract_predictions_from_image
             progress_msg = "AI 正在识别图片...（首次加载 OCR 模型较慢）"
+            analyzer_kwargs = {}
         else:
             analyzer = ai_handler.extract_predictions_from_html
             progress_msg = "AI 正在分析 HTML 文件..."
+            # 传当前模式的 Excel 白名单约束编号
+            if self.data_mode == 'bd':
+                analyzer_kwargs = {
+                    'excel_path': self.bd_excel_path or "",
+                    'sheet_name': self.bd_sheet_name or "",
+                    'mode': 'bd',
+                }
+            else:
+                analyzer_kwargs = {
+                    'excel_path': self.excel_path or "",
+                    'sheet_name': self.sheet_name or "",
+                    'mode': 'jc',
+                }
 
         # 调 AI（带进度提示）
         progress = QProgressDialog(progress_msg, None, 0, 0, self)
@@ -726,7 +740,7 @@ class EnhancedDataEditor(QMainWindow):
         progress.show()
         QApplication.processEvents()
         try:
-            result = analyzer(path)
+            result = analyzer(path, **analyzer_kwargs)
         except Exception as e:
             progress.close()
             QMessageBox.critical(self, "错误", f"AI 调用失败：{str(e)}")

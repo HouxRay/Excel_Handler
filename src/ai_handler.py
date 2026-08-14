@@ -5,11 +5,13 @@ from src import ai_client
 from src import ai_parser
 
 
-def extract_predictions_from_html(html_file_path: str) -> dict:
+def extract_predictions_from_html(html_file_path: str, excel_path: str = None,
+                                  sheet_name: str = None, mode: str = 'jc') -> dict:
     """HTML 文件 → AI 结构化预测结果。
 
+    excel_path/sheet_name: 提供则加载白名单约束 AI 输出编号
+    mode: 'jc' 或 'bd'，决定白名单类型和提示词
     Returns: {"predictions": [...], "raw": "...", "method": "json"|"line"}
-    空结果时 predictions 为空列表，不报错。
     """
     if not html_file_path or not os.path.exists(html_file_path):
         return {
@@ -22,7 +24,21 @@ def extract_predictions_from_html(html_file_path: str) -> dict:
         html_content = f.read()
 
     markdown_text = ai_client.html_to_markdown(html_content)
-    response_text = ai_client.call_ai(markdown_text)
+
+    # 若提供 Excel，加载白名单 + 目标日期，用白名单提示词
+    if excel_path:
+        from src import ai_alignment
+        if mode == 'bd':
+            whitelist = ai_alignment.load_bd_whitelist(excel_path, sheet_name)
+        else:
+            whitelist = ai_alignment.load_excel_whitelist(excel_path, sheet_name)
+        target_date = ai_alignment.detect_target_date(markdown_text)
+        messages = ai_client.build_messages_with_whitelist(
+            markdown_text, whitelist, target_date, mode)
+        response_text = ai_client.call_deepseek(messages)
+    else:
+        response_text = ai_client.call_ai(markdown_text)
+
     return ai_parser.parse_ai_result(response_text)
 
 

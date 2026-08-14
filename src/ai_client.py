@@ -71,7 +71,7 @@ def _beijing_weekday() -> str:
 
 
 def build_messages(markdown_text: str) -> list[dict]:
-    """构建 Chat messages"""
+    """构建 Chat messages（无白名单，兼容旧逻辑）"""
     today = _beijing_weekday()
     user_text = (
         f"今天是{today}，请分析以下文本中的足球比赛预测，"
@@ -82,6 +82,19 @@ def build_messages(markdown_text: str) -> list[dict]:
         {"role": "system", "content": ai_config.get_system_prompt()},
         {"role": "user", "content": user_text},
     ]
+
+
+def build_messages_with_whitelist(markdown_text: str, whitelist: dict,
+                                  target_date: str = "", mode: str = 'jc') -> list[dict]:
+    """带白名单的提示词构建（JC/BD 对齐）。
+
+    whitelist: {编号: (队伍A, 队伍B)}
+    mode: 'jc' 或 'bd'
+    """
+    from src import ai_prompts
+    if mode == 'bd':
+        return ai_prompts.build_bd_messages(markdown_text, whitelist, target_date)
+    return ai_prompts.build_jc_messages(markdown_text, whitelist, target_date)
 
 
 def call_deepseek(messages: list[dict], timeout: int = 120) -> str:
