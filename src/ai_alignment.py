@@ -92,6 +92,14 @@ def extract_codes_from_text(html_text: str) -> set:
     return codes
 
 
+def extract_bd_code_from_filename(filename: str) -> str:
+    """从 BD 文件名提取 BD 号。'北单63冰岛超....html' → '63'"""
+    if not filename:
+        return ""
+    m = re.search(r'北单(\d+)', filename)
+    return m.group(1) if m else ""
+
+
 def filter_hallucinations(predictions: list, text_codes: set, whitelist: dict,
                           mode: str = 'jc') -> list:
     """丢弃不在'文本实际出现编号'∩'白名单'内的预测。

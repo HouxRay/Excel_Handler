@@ -36,8 +36,7 @@ json/
 *.zip
 *.backup
 
-# 需求文档
-Requires/
-Skill/
-update/
-update_requires/
+# 测试脚本
+*_test*.py
+test_*.py
+test_excel/
