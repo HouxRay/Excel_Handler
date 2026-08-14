@@ -37,3 +37,9 @@ def extract_predictions_from_text(text: str) -> dict:
 
     response_text = ai_client.call_ai(text)
     return ai_parser.parse_ai_result(response_text)
+
+
+def extract_predictions_from_image(image_path: str) -> dict:
+    """图片 → OCR → AI → 结构化结果"""
+    from src import ocr_handler
+    return ocr_handler.extract_predictions_from_image(image_path)

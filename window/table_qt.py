@@ -686,18 +686,22 @@ class EnhancedDataEditor(QMainWindow):
             QMessageBox.warning(self, "警告", f"读取失败: {str(e)}")
 
     def _on_ai_fill(self):
-        """AI 填入：选择 HTML 文件 → 调用 AI 填入核心逻辑"""
+        """AI 填入：选择 HTML/图片文件 → 调用 AI 填入核心逻辑"""
         start_dir = self.file_path or self.bd_file_path or ""
         file, _ = QFileDialog.getOpenFileName(
-            self, "选择HTML文件",
+            self, "选择HTML或图片文件",
             directory=start_dir,
-            filter="HTML Files (*.html)"
+            filter="HTML Files (*.html);;图片文件 (*.png *.jpg *.jpeg *.bmp)"
         )
         if file:
-            self._ai_fill_from_html(file)
+            self._ai_fill_from_path(file)
 
     def _ai_fill_from_html(self, html_path: str):
-        """AI 分析指定 HTML 文件 → 预览 → 填入（HTML查看器和主窗口按钮共用）"""
+        """HTML 查看器调用：分析指定 HTML 文件"""
+        self._ai_fill_from_path(html_path)
+
+    def _ai_fill_from_path(self, path: str):
+        """AI 分析指定 HTML/图片文件 → 预览 → 填入（查看器和主窗口共用）"""
         # 检查 API Key
         if not ai_config.get_api_key():
             QMessageBox.warning(
@@ -706,14 +710,23 @@ class EnhancedDataEditor(QMainWindow):
             )
             return
 
+        # 按扩展名分流 HTML / 图片
+        ext = os.path.splitext(path)[1].lower()
+        if ext in ('.png', '.jpg', '.jpeg', '.bmp'):
+            analyzer = ai_handler.extract_predictions_from_image
+            progress_msg = "AI 正在识别图片...（首次加载 OCR 模型较慢）"
+        else:
+            analyzer = ai_handler.extract_predictions_from_html
+            progress_msg = "AI 正在分析 HTML 文件..."
+
         # 调 AI（带进度提示）
-        progress = QProgressDialog("AI 正在分析 HTML 文件...", None, 0, 0, self)
+        progress = QProgressDialog(progress_msg, None, 0, 0, self)
         progress.setWindowTitle("AI 分析中")
         progress.setWindowModality(Qt.WindowModal)
         progress.show()
         QApplication.processEvents()
         try:
-            result = ai_handler.extract_predictions_from_html(html_path)
+            result = analyzer(path)
         except Exception as e:
             progress.close()
             QMessageBox.critical(self, "错误", f"AI 调用失败：{str(e)}")

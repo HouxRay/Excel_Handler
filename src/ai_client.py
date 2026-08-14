@@ -129,15 +129,15 @@ def call_deepseek(messages: list[dict], timeout: int = 120) -> str:
         model=ai_config.get_model(),
         messages=messages,
         temperature=0.7,
-        max_tokens=4096,
+        max_tokens=8192,
         stream=False,
-        reasoning_effort="medium",
-        extra_body={},
+        # 禁用思维链：deepseek-v4-flash 默认思考会耗尽 token 导致 content 为空
+        extra_body={'thinking': {'type': 'disabled'}},
     )
 
-    # V4 thinking 模式下 content 可能为 None，退到 reasoning_content
+    # 若 content 为空（兜底），回退到 reasoning_content
     content = response.choices[0].message.content
-    if content is None:
+    if not content:
         content = getattr(response.choices[0].message, 'reasoning_content', None) or ""
     return content
 
