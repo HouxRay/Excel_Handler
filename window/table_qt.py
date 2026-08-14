@@ -20,7 +20,7 @@ from src.data_loader import load_pic_config, load_json_to_storage, load_bd_json,
 from src.exporter import collect_export_write_ops, collect_sort_stats
 from src.log_setup import logger, setup_logger, QTextEditLogger
 from src.zip_handler import ensure_extracted
-from src import ai_handler, ai_config, ai_storage
+from src import ai_handler, ai_config, ai_storage, ai_alignment
 from window.html_viewer import NewWindow
 from window.settings_dialog import SettingsDialog
 from window.ai_preview_dialog import AiPreviewDialog
@@ -775,10 +775,12 @@ class EnhancedDataEditor(QMainWindow):
             progress_msg = "AI 正在分析 HTML 文件..."
             # 传当前模式的 Excel 白名单约束编号
             if self.data_mode == 'bd':
+                target_bd = ai_alignment.extract_bd_code_from_filename(os.path.basename(path))
                 analyzer_kwargs = {
                     'excel_path': self.bd_excel_path or "",
                     'sheet_name': self.bd_sheet_name or "",
                     'mode': 'bd',
+                    'target_bd_code': target_bd,
                 }
             else:
                 analyzer_kwargs = {
@@ -839,24 +841,23 @@ class EnhancedDataEditor(QMainWindow):
         self.refresh_table()
 
     def _apply_ai_bd(self, predictions: list):
-        """BD 模式：写入 bd_data_storage"""
+        """BD 模式：写入 bd_data_storage（汇总所有机构的比分分组）"""
+        all_groups = []
+        code_target = None
         for pred in predictions:
             code = str(pred.get("code", ""))
             scores = pred.get("scores", [])
-            # 规范化 scores：统一转字符串，过滤非 2 位数字
-            normalized = []
-            for s in scores:
-                if isinstance(s, list):
-                    pair = [str(x).strip() for x in s[:2]]
-                else:
-                    pair = [str(s).strip()]
-                pair = [x for x in pair if x.isdigit() and len(x) == 2]
-                if pair:
-                    normalized.append(pair)
-            # 按 code 匹配 bd_data_storage
+            if not code_target:
+                code_target = code
+            # 该机构的比分组（已是 2 位数字分组）
+            group = [str(x).strip() for x in scores if str(x).strip().isdigit()]
+            if group:
+                all_groups.append(group)
+        # 一次性写入该比赛的所有比分分组
+        if code_target:
             for info in self.bd_data_storage.values():
-                if info.get("code") == code:
-                    info["scores"] = normalized
+                if info.get("code") == code_target:
+                    info["scores"] = all_groups
                     break
 
     def _apply_ai_jc(self, predictions: list, source_file: str = ""):
