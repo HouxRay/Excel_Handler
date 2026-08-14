@@ -40,7 +40,7 @@ def extract_predictions_from_html(html_file_path: str, excel_path: str = None,
         result = ai_parser.parse_ai_result(response_text)
         text_codes = ai_alignment.extract_codes_from_text(html_content)
         result['predictions'] = ai_alignment.filter_hallucinations(
-            result.get('predictions', []), text_codes, whitelist)
+            result.get('predictions', []), text_codes, whitelist, mode=mode)
         return result
 
     response_text = ai_client.call_ai(markdown_text)

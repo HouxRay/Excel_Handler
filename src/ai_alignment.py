@@ -92,12 +92,23 @@ def extract_codes_from_text(html_text: str) -> set:
     return codes
 
 
-def filter_hallucinations(predictions: list, text_codes: set, whitelist: dict) -> list:
+def filter_hallucinations(predictions: list, text_codes: set, whitelist: dict,
+                          mode: str = 'jc') -> list:
     """丢弃不在'文本实际出现编号'∩'白名单'内的预测。
 
     防止 AI 把白名单当选择题填满，输出文本未提到的编号。
+    mode='jc'：编号补零到3位匹配；mode='bd'：纯数字直接匹配。
     """
     if not predictions:
         return []
     valid = text_codes & set(whitelist.keys()) if whitelist else text_codes
-    return [p for p in predictions if str(p.get('code', '')).lstrip('0').zfill(3) in valid]
+    filtered = []
+    for p in predictions:
+        code = str(p.get('code', '')).strip()
+        if mode == 'bd':
+            ok = code in valid  # BD：纯数字，不做补零
+        else:
+            ok = code.lstrip('0').zfill(3) in valid  # JC：补零到3位
+        if ok:
+            filtered.append(p)
+    return filtered

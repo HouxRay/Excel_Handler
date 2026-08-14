@@ -191,16 +191,22 @@ class SettingsDialog(QDialog):
         ai_del_row.addStretch()
         ai_layout.addLayout(ai_del_row)
 
-        # HTML/文本提示词
-        ai_layout.addWidget(QLabel("HTML/文本提示词（AI 分析时使用）："))
+        # HTML/文本提示词（JC）
+        ai_layout.addWidget(QLabel("JC（HTML/文本）提示词："))
         self.ai_prompt_edit = QTextEdit(ai_config.get_system_prompt())
-        self.ai_prompt_edit.setMaximumHeight(140)
+        self.ai_prompt_edit.setMaximumHeight(120)
         ai_layout.addWidget(self.ai_prompt_edit)
+
+        # BD 提示词
+        ai_layout.addWidget(QLabel("BD（北单）提示词："))
+        self.ai_prompt_bd_edit = QTextEdit(ai_config.get_system_prompt_bd())
+        self.ai_prompt_bd_edit.setMaximumHeight(120)
+        ai_layout.addWidget(self.ai_prompt_bd_edit)
 
         # 图片提示词
         ai_layout.addWidget(QLabel("图片提示词（OCR 识别后使用）："))
         self.ai_prompt_pic_edit = QTextEdit(ai_config.get_system_prompt_pic())
-        self.ai_prompt_pic_edit.setMaximumHeight(140)
+        self.ai_prompt_pic_edit.setMaximumHeight(120)
         ai_layout.addWidget(self.ai_prompt_pic_edit)
 
         # 恢复默认提示词
@@ -420,6 +426,7 @@ class SettingsDialog(QDialog):
     def _on_ai_prompt_reset(self):
         """恢复默认提示词"""
         self.ai_prompt_edit.setPlainText(ai_config.DEFAULT_SYSTEM_PROMPT)
+        self.ai_prompt_bd_edit.setPlainText(ai_config.DEFAULT_SYSTEM_PROMPT_BD)
         self.ai_prompt_pic_edit.setPlainText(ai_config.DEFAULT_SYSTEM_PROMPT_PIC)
         self._mark_changed()
 
@@ -537,6 +544,7 @@ class SettingsDialog(QDialog):
         ai_config.save_system_prompts(
             self.ai_prompt_edit.toPlainText(),
             self.ai_prompt_pic_edit.toPlainText(),
+            self.ai_prompt_bd_edit.toPlainText(),
         )
 
         self.current_paths = {

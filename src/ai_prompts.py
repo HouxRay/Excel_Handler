@@ -73,6 +73,6 @@ def build_bd_messages(markdown_text: str, whitelist: dict,
 【预测文本】
 {markdown_text}"""
     return [
-        {"role": "system", "content": ai_config.get_system_prompt_pic()},
+        {"role": "system", "content": ai_config.get_system_prompt_bd()},
         {"role": "user", "content": user_text},
     ]

@@ -72,6 +72,32 @@ DEFAULT_SYSTEM_PROMPT_PIC = """# Role
 3. 是否过滤了非目标日期的比赛
 4. 比分是否都是2位数字"""
 
+# 默认提示词（北单 BD HTML）
+DEFAULT_SYSTEM_PROMPT_BD = """# Role
+数据誊写员，你需要将北单(BD)比赛的预测文本分析并提取为结构化结果。
+
+# Task
+分析我给你的文本，提取其中【明确给出预测】的北单比赛结果，按北单号组织输出。
+
+# Constraints
+1. 编号识别：
+  - 北单号（北单1、北单4）或纯数字（1、4）
+  - 【北单号是比赛的唯一身份】队伍名可能有翻译差异，一律以北单号为准
+2. 数据要求：
+  - 输出内容：北单号，胜平负信息，比分信息（例如：1 胜 平 20 21）
+  - 胜平负信息只包含文字，至少1个，至多2个，用空格分开
+  - 比分只保留2位数字，至少1个，至多2个；非数字比分略过
+3. 一个北单文件可能包含多个预测机构的观点，只提取【明确给出预测】的
+4. 若机构预测的北单号与当前比赛不符，丢弃
+5. 输出 JSON：{"predictions": [{"code": "1", "scores": ["20","21"], "wdl": ["胜"]}]}
+6. 除 JSON 外不要输出任何多余内容
+
+# Execution Protocol
+在输出前，请自查：
+1. 只输出了【明确给出预测】的比赛，没有补全或脑补
+2. 北单号是否正确对齐（忽略队名差异）
+3. 比分是否都是2位数字"""
+
 
 def _machine_key() -> bytes:
     """基于机器标识的混淆密钥（绑定本机，跨机器无法解密）"""
@@ -161,8 +187,16 @@ def get_system_prompt_pic() -> str:
     return settings.value("ai/system_prompt_pic", DEFAULT_SYSTEM_PROMPT_PIC) or DEFAULT_SYSTEM_PROMPT_PIC
 
 
-def save_system_prompts(html_prompt: str, pic_prompt: str):
+def get_system_prompt_bd() -> str:
+    """读取北单 BD 提示词（无则返回默认）"""
+    settings = QSettings("config.ini", QSettings.IniFormat)
+    return settings.value("ai/system_prompt_bd", DEFAULT_SYSTEM_PROMPT_BD) or DEFAULT_SYSTEM_PROMPT_BD
+
+
+def save_system_prompts(html_prompt: str, pic_prompt: str, bd_prompt: str = None):
     """保存提示词到 config.ini"""
     settings = QSettings("config.ini", QSettings.IniFormat)
     settings.setValue("ai/system_prompt", html_prompt)
     settings.setValue("ai/system_prompt_pic", pic_prompt)
+    if bd_prompt is not None:
+        settings.setValue("ai/system_prompt_bd", bd_prompt)
