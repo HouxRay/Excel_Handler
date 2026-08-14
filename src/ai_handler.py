@@ -6,11 +6,13 @@ from src import ai_parser
 
 
 def extract_predictions_from_html(html_file_path: str, excel_path: str = None,
-                                  sheet_name: str = None, mode: str = 'jc') -> dict:
+                                  sheet_name: str = None, mode: str = 'jc',
+                                  target_bd_code: str = "") -> dict:
     """HTML 文件 → AI 结构化预测结果。
 
     excel_path/sheet_name: 提供则加载白名单约束 AI 输出编号
     mode: 'jc' 或 'bd'，决定白名单类型和提示词
+    target_bd_code: BD 模式当前文件的目标 BD 号，只保留该号的预测
     Returns: {"predictions": [...], "raw": "...", "method": "json"|"line"}
     """
     if not html_file_path or not os.path.exists(html_file_path):
@@ -34,13 +36,18 @@ def extract_predictions_from_html(html_file_path: str, excel_path: str = None,
             whitelist = ai_alignment.load_excel_whitelist(excel_path, sheet_name)
         target_date = ai_alignment.detect_target_date(markdown_text)
         messages = ai_client.build_messages_with_whitelist(
-            markdown_text, whitelist, target_date, mode)
+            markdown_text, whitelist, target_date, mode, target_bd_code)
         response_text = ai_client.call_deepseek(messages)
         # 后端校验：过滤 AI 幻觉补全的编号
-        result = ai_parser.parse_ai_result(response_text)
-        text_codes = ai_alignment.extract_codes_from_text(html_content)
-        result['predictions'] = ai_alignment.filter_hallucinations(
-            result.get('predictions', []), text_codes, whitelist, mode=mode)
+        result = ai_parser.parse_ai_result(response_text, mode=mode)
+        if mode == 'bd' and target_bd_code:
+            # BD 硬约束：只保留当前文件的 BD 号
+            result['predictions'] = [p for p in result.get('predictions', [])
+                                     if str(p.get('code', '')).strip() == target_bd_code]
+        else:
+            text_codes = ai_alignment.extract_codes_from_text(html_content)
+            result['predictions'] = ai_alignment.filter_hallucinations(
+                result.get('predictions', []), text_codes, whitelist, mode=mode)
         return result
 
     response_text = ai_client.call_ai(markdown_text)

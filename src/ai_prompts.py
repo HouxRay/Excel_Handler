@@ -48,27 +48,31 @@ def build_jc_messages(markdown_text: str, whitelist: dict,
 
 
 def build_bd_messages(markdown_text: str, whitelist: dict,
-                      target_date: str = "") -> list[dict]:
+                      target_date: str = "", target_bd_code: str = "") -> list[dict]:
     """BD 模式：给定 BD 号白名单，让 AI 对齐输出
 
     whitelist: {BD号: (队伍A, 队伍B)} 来自 BD Excel 表头
+    target_bd_code: 当前文件的 BD 号（如"63"），只输出该号的预测
     """
-    whitelist_str = _format_whitelist(whitelist)
+    code_hint = ""
+    if target_bd_code:
+        code_hint = f"【当前比赛 BD 号】{target_bd_code}\n只输出 BD 号 {target_bd_code} 的比分预测。\n"
 
-    user_text = f"""请分析以下预测文本，提取北单（BD）比赛的预测结果。
+    user_text = f"""请分析以下预测文本，提取北单（BD）比赛的比分预测。
 
-【目标BD比赛清单】（编号、队伍）
-{whitelist_str}
+{code_hint}
+请按以下格式逐行输出每个机构的比分预测：
+
+机构名：北单号 比分1 比分2 ...
 
 【规则】
-1. 只输出预测文本中【明确给出预测】的比赛
-2. 目标清单只用于验证编号是否合法，绝不用于补全
-3. 文本未提到的比赛，绝对不要输出（即使它在目标清单中）
-4. 以 BD 编号为准识别比赛，队伍名可能有翻译差异，忽略
-5. 若某机构预测的 BD 号与当前比赛不符，丢弃
-6. 比分只保留 2 位数字
-7. 宁可少输出，不可多输出（避免幻觉）
-8. 输出 JSON 格式：{{"predictions": [{{"code": "1", "scores": ["20","21"], "wdl": ["胜"]}}]}}
+1. 只输出 BD 号 {target_bd_code if target_bd_code else ''} 的比赛
+2. 每行格式：机构名 + 冒号 + 北单号 + 该机构给出的比分（2位数字，1-3个，用空格分隔）
+3. 没有名字的机构，标注为 None1、None2、None3...（依次递增，区分不同实例，不要合并）
+4. 不同机构即使比分相同也要分别列出（机构不同）
+5. 以"Part 1 [输出结果]"开头
+6. 不要输出胜平负（胜/负/平）、队伍名、赔率等多余内容
+7. 最后用 JSON 包装：{{"predictions": [{{"label": "机构名", "code": "63", "scores": ["10","20"]}}, ...]}}
 
 【预测文本】
 {markdown_text}"""
