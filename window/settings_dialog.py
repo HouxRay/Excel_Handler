@@ -2,12 +2,13 @@ import os
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QLineEdit, QPushButton, QFileDialog, QMessageBox,
                              QComboBox, QTabWidget, QTableWidget, QTableWidgetItem,
-                             QGroupBox, QWidget, QHeaderView)
+                             QGroupBox, QWidget, QHeaderView, QCheckBox)
 from PyQt5.QtCore import QSettings
 from openpyxl import load_workbook
 from src.mapping_manager import (get_match_dict, get_default_match_dict, save_match_dict,
                                   get_keyboard_mappings, get_default_keyboard_mappings,
                                   save_keyboard_mappings)
+from src import ai_config
 
 
 class SettingsDialog(QDialog):
@@ -147,6 +148,52 @@ class SettingsDialog(QDialog):
         name_layout.addLayout(name_btn_layout)
         tabs.addTab(name_tab, "名称映射")
 
+        # === Tab 4: AI 设置 ===
+        ai_tab = QWidget()
+        ai_layout = QVBoxLayout(ai_tab)
+
+        # API Key
+        ai_key_row = QHBoxLayout()
+        ai_key_row.addWidget(QLabel("API Key:"))
+        self.ai_key_edit = QLineEdit()
+        self.ai_key_edit.setEchoMode(QLineEdit.Password)
+        self.ai_key_edit.setPlaceholderText("输入 API Key（保存后不可见）")
+        ai_key_row.addWidget(self.ai_key_edit)
+        ai_key_row.addWidget(QLabel("显示"))
+        self.ai_show_check = QCheckBox()
+        self.ai_show_check.toggled.connect(self._on_ai_show_toggle)
+        ai_key_row.addWidget(self.ai_show_check)
+        ai_layout.addLayout(ai_key_row)
+
+        # 状态标签
+        self.ai_status_label = QLabel()
+        ai_layout.addWidget(self.ai_status_label)
+
+        # 模型
+        ai_model_row = QHBoxLayout()
+        ai_model_row.addWidget(QLabel("模型:"))
+        self.ai_model_edit = QLineEdit(ai_config.get_model())
+        ai_model_row.addWidget(self.ai_model_edit)
+        ai_layout.addLayout(ai_model_row)
+
+        # 基址
+        ai_base_row = QHBoxLayout()
+        ai_base_row.addWidget(QLabel("API 基址:"))
+        self.ai_base_edit = QLineEdit(ai_config.get_base_url())
+        ai_base_row.addWidget(self.ai_base_edit)
+        ai_layout.addLayout(ai_base_row)
+
+        # 删除按钮
+        ai_del_row = QHBoxLayout()
+        ai_del_btn = QPushButton("🗑️ 删除 API Key")
+        ai_del_btn.clicked.connect(self._on_ai_key_delete)
+        ai_del_row.addWidget(ai_del_btn)
+        ai_del_row.addStretch()
+        ai_layout.addLayout(ai_del_row)
+
+        ai_layout.addStretch()
+        tabs.addTab(ai_tab, "AI 设置")
+
         main_layout.addWidget(tabs)
 
         # --- 底部按钮 ---
@@ -186,6 +233,7 @@ class SettingsDialog(QDialog):
         self._populate_table(self.match_table, get_match_dict())
         self._populate_table(self.keyboard_table, get_keyboard_mappings())
         self._load_name_mapping_table()
+        self._update_ai_status()
 
     # ---- Path tab helpers ----
 
@@ -320,6 +368,35 @@ class SettingsDialog(QDialog):
     def _mark_changed(self):
         self._changed = True
 
+    # ---- AI 设置 ----
+    def _on_ai_show_toggle(self, checked: bool):
+        """显示勾选：临时显示明文"""
+        self.ai_key_edit.setEchoMode(QLineEdit.Normal if checked else QLineEdit.Password)
+
+    def _on_ai_key_delete(self):
+        """删除 API Key"""
+        if not ai_config.has_api_key():
+            QMessageBox.information(self, "提示", "尚未配置 API Key")
+            return
+        reply = QMessageBox.question(
+            self, "确认删除", "确定删除 API Key 吗？",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            ai_config.clear_api_key()
+            self.ai_key_edit.clear()
+            self._update_ai_status()
+            self._mark_changed()
+
+    def _update_ai_status(self):
+        """更新 AI 状态标签"""
+        if ai_config.has_api_key():
+            self.ai_status_label.setText("状态：✅ 已配置（保存后不可见明文）")
+            self.ai_status_label.setStyleSheet("color: #2E7D32; font-size: 11px;")
+        else:
+            self.ai_status_label.setText("状态：⚪ 未配置")
+            self.ai_status_label.setStyleSheet("color: #999; font-size: 11px;")
+
     @staticmethod
     def _get_last_dir(key: str, default: str = "") -> str:
         settings = QSettings("config.ini", QSettings.IniFormat)
@@ -423,6 +500,13 @@ class SettingsDialog(QDialog):
         bd_sheet = self.bd_sheet_combo.currentText() if self.bd_sheet_combo.isEnabled() else ""
         settings.setValue("paths/bd_sheet_name", bd_sheet)
         settings.setValue("paths/bd_json_path", self.bd_json_edit.text())
+
+        # AI 设置（api_key 为空时保留原值）
+        ai_config.save_ai_config(
+            self.ai_key_edit.text(),
+            self.ai_model_edit.text(),
+            self.ai_base_edit.text(),
+        )
 
         self.current_paths = {
             'mapping_path': self.mapping_edit.text(),
