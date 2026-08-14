@@ -20,7 +20,7 @@ from src.data_loader import load_pic_config, load_json_to_storage, load_bd_json,
 from src.exporter import collect_export_write_ops, collect_sort_stats
 from src.log_setup import logger, setup_logger, QTextEditLogger
 from src.zip_handler import ensure_extracted
-from src import ai_handler, ai_config
+from src import ai_handler, ai_config, ai_storage
 from window.html_viewer import NewWindow
 from window.settings_dialog import SettingsDialog
 from window.ai_preview_dialog import AiPreviewDialog
@@ -686,15 +686,77 @@ class EnhancedDataEditor(QMainWindow):
             QMessageBox.warning(self, "警告", f"读取失败: {str(e)}")
 
     def _on_ai_fill(self):
-        """AI 填入：选择 HTML/图片文件 → 调用 AI 填入核心逻辑"""
-        start_dir = self.file_path or self.bd_file_path or ""
-        file, _ = QFileDialog.getOpenFileName(
-            self, "选择HTML或图片文件",
-            directory=start_dir,
-            filter="HTML Files (*.html);;图片文件 (*.png *.jpg *.jpeg *.bmp)"
+        """AI 填入：选择新预测或查看历史"""
+        msg = QMessageBox(self)
+        msg.setWindowTitle("AI 填入")
+        msg.setText("请选择操作：")
+        btn_new = msg.addButton("🤖 新预测", QMessageBox.ActionRole)
+        btn_history = msg.addButton("📂 历史预测", QMessageBox.ActionRole)
+        msg.addButton("取消", QMessageBox.RejectRole)
+        msg.exec_()
+        clicked = msg.clickedButton()
+
+        if clicked == btn_new:
+            start_dir = self.file_path or self.bd_file_path or ""
+            file, _ = QFileDialog.getOpenFileName(
+                self, "选择HTML或图片文件",
+                directory=start_dir,
+                filter="HTML Files (*.html);;图片文件 (*.png *.jpg *.jpeg *.bmp)"
+            )
+            if file:
+                self._ai_fill_from_path(file)
+        elif clicked == btn_history:
+            self._show_ai_history()
+
+    def _show_ai_history(self):
+        """查看历史 AI 预测结果"""
+        results = ai_storage.load_ai_results()
+        if not results:
+            QMessageBox.information(self, "提示", "暂无历史 AI 预测记录")
+            return
+
+        msg = QMessageBox(self)
+        msg.setWindowTitle("历史 AI 预测")
+        msg.setText("选择要复用的预测结果：")
+        for r in results[:10]:
+            label = f"{r['timestamp']} | {r['source_file']} | {r['predictions_count']}条"
+            msg.addButton(label, QMessageBox.ActionRole)
+        msg.addButton("取消", QMessageBox.RejectRole)
+        msg.exec_()
+        clicked = msg.clickedButton()
+        if clicked is None or clicked.text() == "取消":
+            return
+
+        # 找到选中的结果
+        idx = None
+        for i, r in enumerate(results[:10]):
+            label = f"{r['timestamp']} | {r['source_file']} | {r['predictions_count']}条"
+            if clicked.text() == label:
+                idx = i
+                break
+        if idx is None:
+            return
+
+        data = ai_storage.load_ai_result(results[idx]['filepath'])
+        predictions = data.get("predictions", [])
+        if not predictions:
+            QMessageBox.information(self, "提示", "该记录无预测数据")
+            return
+
+        mode_hint = 'bd' if data.get('mode') == 'bd' else 'jc'
+        dialog = AiPreviewDialog(
+            predictions, mode_hint, parent=self,
+            raw=data.get("raw", ""),
+            method=data.get("method", ""),
+            source_file=data.get("source_file", ""),
         )
-        if file:
-            self._ai_fill_from_path(file)
+        if dialog.exec_() == QDialog.Accepted:
+            selected = dialog.get_selected()
+            if not selected:
+                return
+            self._apply_ai_predictions(selected)
+            self.logger.info(f"从历史复用 {len(selected)} 条预测")
+            self.log_output.append(f"✅ 从历史复用 {len(selected)} 条预测")
 
     def _ai_fill_from_html(self, html_path: str):
         """HTML 查看器调用：分析指定 HTML 文件"""
@@ -747,13 +809,25 @@ class EnhancedDataEditor(QMainWindow):
             return
         progress.close()
 
+        # 自动保存 AI 结果（防误关窗口后结果丢失，可复用）
+        mode_hint = 'bd' if self.data_mode == 'bd' else 'jc'
+        try:
+            ai_storage.save_ai_result(result, source_file=path, mode=mode_hint)
+        except Exception:
+            pass
+
         predictions = result.get("predictions", [])
         if not predictions:
             QMessageBox.information(self, "提示", "AI 未提取到预测结果（今天可能无数据）")
             return
 
         # 预览确认
-        dialog = AiPreviewDialog(predictions, self.data_mode, parent=self)
+        dialog = AiPreviewDialog(
+            predictions, self.data_mode, parent=self,
+            raw=result.get("raw", ""),
+            method=result.get("method", ""),
+            source_file=path,
+        )
         if dialog.exec_() == QDialog.Accepted:
             selected = dialog.get_selected()
             if not selected:
