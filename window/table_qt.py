@@ -754,7 +754,7 @@ class EnhancedDataEditor(QMainWindow):
             selected = dialog.get_selected()
             if not selected:
                 return
-            self._apply_ai_predictions(selected)
+            self._apply_ai_predictions(selected, source_file=data.get("source_file", ""))
             self.logger.info(f"从历史复用 {len(selected)} 条预测")
             self.log_output.append(f"✅ 从历史复用 {len(selected)} 条预测")
 
@@ -833,16 +833,16 @@ class EnhancedDataEditor(QMainWindow):
             if not selected:
                 QMessageBox.information(self, "提示", "未勾选任何结果")
                 return
-            self._apply_ai_predictions(selected)
+            self._apply_ai_predictions(selected, source_file=path)
             self.logger.info(f"AI 填入 {len(selected)} 条预测")
             self.log_output.append(f"✅ AI 已填入 {len(selected)} 条预测")
 
-    def _apply_ai_predictions(self, predictions: list):
+    def _apply_ai_predictions(self, predictions: list, source_file: str = ""):
         """将确认的 AI 预测写入对应模式的数据存储"""
         if self.data_mode == 'bd':
             self._apply_ai_bd(predictions)
         else:
-            self._apply_ai_jc(predictions)
+            self._apply_ai_jc(predictions, source_file=source_file)
         self.is_dirty = True
         self.refresh_table()
 
@@ -867,10 +867,12 @@ class EnhancedDataEditor(QMainWindow):
                     info["scores"] = normalized
                     break
 
-    def _apply_ai_jc(self, predictions: list):
+    def _apply_ai_jc(self, predictions: list, source_file: str = ""):
         """JC/HTML 模式：写入 data_storage"""
+        # 机构名：pred 无 label 时，从 source_file 文件名推断
+        default_category = os.path.splitext(os.path.basename(source_file or ""))[0] if source_file else ""
         for pred in predictions:
-            category = pred.get("label", "") or pred.get("category", "")
+            category = pred.get("label", "") or pred.get("category", "") or default_category
             code = str(pred.get("code", "")).zfill(3)
             scores = pred.get("scores", [])
             # 扁平化 scores 到 4 个比分位
