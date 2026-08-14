@@ -45,8 +45,8 @@ class NewWindow(QDialog):
             self.day_combo.currentTextChanged.connect(self._on_day_changed)
             toolbar_layout.addWidget(self.day_combo)
 
-            # AI 填入按钮：分析当前打开的 HTML
-            self.ai_btn = QPushButton("🤖 AI 填入")
+            # AI 分析按钮：分析当前打开的 HTML
+            self.ai_btn = QPushButton("🤖 AI 分析当前内容")
             self.ai_btn.setStyleSheet("font-size: 11px; padding: 1px 6px;")
             self.ai_btn.clicked.connect(self._on_ai_fill)
             toolbar_layout.addWidget(self.ai_btn)
