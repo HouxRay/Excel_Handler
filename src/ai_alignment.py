@@ -67,3 +67,37 @@ def detect_target_date(html_text: str) -> str:
     # 返回出现最多的星期
     from collections import Counter
     return Counter(matches).most_common(1)[0][0]
+
+
+def extract_codes_from_text(html_text: str) -> set:
+    """提取文本中实际出现的比赛编号（周二001 / 北单N）。
+
+    只匹配带明确比赛前缀的编号（周二/周三等星期前缀，或"北单"前缀），
+    避免误把正文中的普通数字（如身价 818、排名 870）当成编号。
+    用于后端校验 AI 输出，防止 AI 幻觉补全。
+    """
+    codes = set()
+    if not html_text:
+        return codes
+    # JC: 周二001 / 周二 001 / 周001 等（必须有星期前缀）
+    for m in re.finditer(r'周[一二三四五六日]\s*(\d{3})', html_text):
+        codes.add(m.group(1).lstrip('0').zfill(3))
+    # 表头/标题常见："竞彩004+005+007"、"004+005+007"（用 + 连接）
+    for m in re.finditer(r'竞彩\s*([\d+]{3,})', html_text):
+        for part in re.findall(r'\d{3}', m.group(1)):
+            codes.add(part)
+    # BD: 北单1, 北单4
+    for m in re.finditer(r'北单\s*(\d+)', html_text):
+        codes.add(m.group(1))
+    return codes
+
+
+def filter_hallucinations(predictions: list, text_codes: set, whitelist: dict) -> list:
+    """丢弃不在'文本实际出现编号'∩'白名单'内的预测。
+
+    防止 AI 把白名单当选择题填满，输出文本未提到的编号。
+    """
+    if not predictions:
+        return []
+    valid = text_codes & set(whitelist.keys()) if whitelist else text_codes
+    return [p for p in predictions if str(p.get('code', '')).lstrip('0').zfill(3) in valid]

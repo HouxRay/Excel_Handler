@@ -36,9 +36,14 @@ def extract_predictions_from_html(html_file_path: str, excel_path: str = None,
         messages = ai_client.build_messages_with_whitelist(
             markdown_text, whitelist, target_date, mode)
         response_text = ai_client.call_deepseek(messages)
-    else:
-        response_text = ai_client.call_ai(markdown_text)
+        # 后端校验：过滤 AI 幻觉补全的编号
+        result = ai_parser.parse_ai_result(response_text)
+        text_codes = ai_alignment.extract_codes_from_text(html_content)
+        result['predictions'] = ai_alignment.filter_hallucinations(
+            result.get('predictions', []), text_codes, whitelist)
+        return result
 
+    response_text = ai_client.call_ai(markdown_text)
     return ai_parser.parse_ai_result(response_text)
 
 
