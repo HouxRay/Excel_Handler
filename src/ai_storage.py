@@ -62,3 +62,34 @@ def load_ai_result(path: str) -> dict:
             return json.load(f)
     except Exception:
         return {}
+
+
+def load_ai_results_filtered(date_filter: str = "", file_filter: str = "") -> list[dict]:
+    """按日期和文件名筛选加载历史 AI 结果。
+
+    date_filter: 'YYYY-MM-DD' 或 ''(全部)
+    file_filter: 机构名(HTML文件名去扩展名) 或 ''(全部)
+    """
+    results = load_ai_results()
+    filtered = []
+    for r in results:
+        if date_filter and not r["timestamp"].startswith(date_filter):
+            continue
+        if file_filter:
+            fname = os.path.splitext(os.path.basename(r["source_file"]))[0]
+            if fname != file_filter:
+                continue
+        filtered.append(r)
+    return filtered
+
+
+def get_available_filenames() -> list[str]:
+    """从历史记录提取所有机构文件名（去扩展名，去重）"""
+    seen = set()
+    names = []
+    for r in load_ai_results():
+        fname = os.path.splitext(os.path.basename(r["source_file"]))[0]
+        if fname and fname not in seen:
+            seen.add(fname)
+            names.append(fname)
+    return names

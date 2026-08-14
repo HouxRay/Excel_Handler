@@ -24,6 +24,7 @@ from src import ai_handler, ai_config, ai_storage
 from window.html_viewer import NewWindow
 from window.settings_dialog import SettingsDialog
 from window.ai_preview_dialog import AiPreviewDialog
+from window.ai_history_dialog import AiHistoryDialog
 
 
 
@@ -709,35 +710,16 @@ class EnhancedDataEditor(QMainWindow):
             self._show_ai_history()
 
     def _show_ai_history(self):
-        """查看历史 AI 预测结果"""
-        results = ai_storage.load_ai_results()
-        if not results:
-            QMessageBox.information(self, "提示", "暂无历史 AI 预测记录")
+        """查看历史 AI 预测结果（带日期/文件名筛选）"""
+        current_file = os.path.splitext(os.path.basename(self._last_ai_source or ""))[0]
+        dlg = AiHistoryDialog(current_file=current_file, parent=self)
+        if dlg.exec_() != QDialog.Accepted:
+            return
+        filepath = dlg.get_selected_filepath()
+        if not filepath:
             return
 
-        msg = QMessageBox(self)
-        msg.setWindowTitle("历史 AI 预测")
-        msg.setText("选择要复用的预测结果：")
-        for r in results[:10]:
-            label = f"{r['timestamp']} | {r['source_file']} | {r['predictions_count']}条"
-            msg.addButton(label, QMessageBox.ActionRole)
-        msg.addButton("取消", QMessageBox.RejectRole)
-        msg.exec_()
-        clicked = msg.clickedButton()
-        if clicked is None or clicked.text() == "取消":
-            return
-
-        # 找到选中的结果
-        idx = None
-        for i, r in enumerate(results[:10]):
-            label = f"{r['timestamp']} | {r['source_file']} | {r['predictions_count']}条"
-            if clicked.text() == label:
-                idx = i
-                break
-        if idx is None:
-            return
-
-        data = ai_storage.load_ai_result(results[idx]['filepath'])
+        data = ai_storage.load_ai_result(filepath)
         predictions = data.get("predictions", [])
         if not predictions:
             QMessageBox.information(self, "提示", "该记录无预测数据")
@@ -764,6 +746,7 @@ class EnhancedDataEditor(QMainWindow):
 
     def _ai_fill_from_path(self, path: str):
         """AI 分析指定 HTML/图片文件 → 预览 → 填入（查看器和主窗口共用）"""
+        self._last_ai_source = path  # 记录当前源文件，供历史对话框定位
         # 检查 API Key
         if not ai_config.get_api_key():
             QMessageBox.warning(
