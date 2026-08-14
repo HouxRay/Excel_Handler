@@ -8,7 +8,7 @@ from datetime import datetime
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QScrollArea, QRadioButton, QTableWidget, QTableWidgetItem,
                              QHeaderView, QPushButton, QButtonGroup, QDialog, QLabel, QMessageBox,
-                             QTextEdit, QProgressDialog, QStyledItemDelegate)
+                             QTextEdit, QProgressDialog, QStyledItemDelegate, QFileDialog)
 from PyQt5.QtCore import Qt, QThread, QEvent, QSettings, QTimer
 from PyQt5.QtGui import QIcon
 
@@ -20,8 +20,10 @@ from src.data_loader import load_pic_config, load_json_to_storage, load_bd_json,
 from src.exporter import collect_export_write_ops, collect_sort_stats
 from src.log_setup import logger, setup_logger, QTextEditLogger
 from src.zip_handler import ensure_extracted
+from src import ai_handler, ai_config
 from window.html_viewer import NewWindow
 from window.settings_dialog import SettingsDialog
+from window.ai_preview_dialog import AiPreviewDialog
 
 
 
@@ -383,9 +385,14 @@ class EnhancedDataEditor(QMainWindow):
         settings_btn.setStyleSheet(orange_style)
         settings_btn.clicked.connect(self._open_settings)
 
+        self.ai_fill_btn = QPushButton("🤖 AI 填入")
+        self.ai_fill_btn.setStyleSheet(orange_style)
+        self.ai_fill_btn.clicked.connect(self._on_ai_fill)
+
         orange_btn_layout.addWidget(self.fill_btn)
         orange_btn_layout.addWidget(refresh_btn)
         orange_btn_layout.addWidget(settings_btn)
+        orange_btn_layout.addWidget(self.ai_fill_btn)
         orange_btn_layout.addStretch()
 
         # ── 蓝色按钮行 ──
@@ -677,6 +684,107 @@ class EnhancedDataEditor(QMainWindow):
                 QMessageBox.warning(self, "提示", "未找到匹配的编号")
         except Exception as e:
             QMessageBox.warning(self, "警告", f"读取失败: {str(e)}")
+
+    def _on_ai_fill(self):
+        """AI 填入：选择 HTML → 调 AI → 预览 → 确认填入"""
+        # 检查 API Key
+        if not ai_config.get_api_key():
+            QMessageBox.warning(
+                self, "提示",
+                "未配置 AI API Key\n请在 config.ini 的 [ai] 段设置 ai/api_key，或稍后在设置中配置"
+            )
+            return
+
+        # 1. 选择 HTML 文件
+        start_dir = self.file_path or self.bd_file_path or ""
+        file, _ = QFileDialog.getOpenFileName(
+            self, "选择HTML文件",
+            directory=start_dir,
+            filter="HTML Files (*.html)"
+        )
+        if not file:
+            return
+
+        # 2. 调 AI（带进度提示）
+        progress = QProgressDialog("AI 正在分析 HTML 文件...", None, 0, 0, self)
+        progress.setWindowTitle("AI 分析中")
+        progress.setWindowModality(Qt.WindowModal)
+        progress.show()
+        QApplication.processEvents()
+        try:
+            result = ai_handler.extract_predictions_from_html(file)
+        except Exception as e:
+            progress.close()
+            QMessageBox.critical(self, "错误", f"AI 调用失败：{str(e)}")
+            return
+        progress.close()
+
+        predictions = result.get("predictions", [])
+        if not predictions:
+            QMessageBox.information(self, "提示", "AI 未提取到预测结果（今天可能无数据）")
+            return
+
+        # 3. 预览确认
+        dialog = AiPreviewDialog(predictions, self.data_mode, parent=self)
+        if dialog.exec_() == QDialog.Accepted:
+            selected = dialog.get_selected()
+            if not selected:
+                QMessageBox.information(self, "提示", "未勾选任何结果")
+                return
+            self._apply_ai_predictions(selected)
+            self.logger.info(f"AI 填入 {len(selected)} 条预测")
+            self.log_output.append(f"✅ AI 已填入 {len(selected)} 条预测")
+
+    def _apply_ai_predictions(self, predictions: list):
+        """将确认的 AI 预测写入对应模式的数据存储"""
+        if self.data_mode == 'bd':
+            self._apply_ai_bd(predictions)
+        else:
+            self._apply_ai_jc(predictions)
+        self.is_dirty = True
+        self.refresh_table()
+
+    def _apply_ai_bd(self, predictions: list):
+        """BD 模式：写入 bd_data_storage"""
+        for pred in predictions:
+            code = str(pred.get("code", ""))
+            scores = pred.get("scores", [])
+            # 规范化 scores：统一转字符串，过滤非 2 位数字
+            normalized = []
+            for s in scores:
+                if isinstance(s, list):
+                    pair = [str(x).strip() for x in s[:2]]
+                else:
+                    pair = [str(s).strip()]
+                pair = [x for x in pair if x.isdigit() and len(x) == 2]
+                if pair:
+                    normalized.append(pair)
+            # 按 code 匹配 bd_data_storage
+            for info in self.bd_data_storage.values():
+                if info.get("code") == code:
+                    info["scores"] = normalized
+                    break
+
+    def _apply_ai_jc(self, predictions: list):
+        """JC/HTML 模式：写入 data_storage"""
+        for pred in predictions:
+            category = pred.get("label", "") or pred.get("category", "")
+            code = str(pred.get("code", "")).zfill(3)
+            scores = pred.get("scores", [])
+            # 扁平化 scores 到 4 个比分位
+            flat = []
+            for s in scores:
+                if isinstance(s, list):
+                    flat.extend(str(x).strip() for x in s)
+                else:
+                    flat.append(str(s).strip())
+            vals = [x for x in flat if x]
+            while len(vals) < 4:
+                vals.append("")
+            vals = vals[:4]
+            # 写入匹配的 category+code
+            if category in self.data_storage and code in self.data_storage[category]:
+                self.data_storage[category][code] = vals
 
     def _fill_bd_from_html(self, selected_item):
         """BD 模式：从北单N.html 详情文件中解析比分并填入"""
