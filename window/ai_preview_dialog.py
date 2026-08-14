@@ -134,23 +134,18 @@ class AiPreviewDialog(QDialog):
                 pred = dict(self.predictions[row])
                 # 读取表格中可能被修改的比分
                 score_item = self.table.item(row, 4)
-                if score_item and score_item.text().strip():
-                    edited = score_item.text().strip()
+                edited = score_item.text().strip() if score_item else ""
+                original = pred.get("scores", [])
+                original_str = " ".join(str(s) for s in original)
+                if edited and edited != original_str:
+                    # 用户手动修改了比分
                     if self.mode == "bd":
-                        # BD：空格分隔的多个比分对
-                        parts = edited.split()
-                        new_scores = []
-                        i = 0
-                        while i < len(parts):
-                            if i + 1 < len(parts) and parts[i].isdigit() and parts[i+1].isdigit() and len(parts[i]) == 2 and len(parts[i+1]) == 2:
-                                new_scores.append([parts[i], parts[i+1]])
-                                i += 2
-                            else:
-                                new_scores.append([parts[i]])
-                                i += 1
-                        pred["scores"] = new_scores
-                    else:
-                        # JC：直接拆分
+                        # BD：编辑后空格分隔的一组比分
                         pred["scores"] = [s for s in edited.split() if s]
+                    else:
+                        pred["scores"] = [s for s in edited.split() if s]
+                else:
+                    # 未修改，保留原始 scores
+                    pred["scores"] = original
                 selected.append(pred)
         return selected
