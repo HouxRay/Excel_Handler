@@ -686,7 +686,18 @@ class EnhancedDataEditor(QMainWindow):
             QMessageBox.warning(self, "警告", f"读取失败: {str(e)}")
 
     def _on_ai_fill(self):
-        """AI 填入：选择 HTML → 调 AI → 预览 → 确认填入"""
+        """AI 填入：选择 HTML 文件 → 调用 AI 填入核心逻辑"""
+        start_dir = self.file_path or self.bd_file_path or ""
+        file, _ = QFileDialog.getOpenFileName(
+            self, "选择HTML文件",
+            directory=start_dir,
+            filter="HTML Files (*.html)"
+        )
+        if file:
+            self._ai_fill_from_html(file)
+
+    def _ai_fill_from_html(self, html_path: str):
+        """AI 分析指定 HTML 文件 → 预览 → 填入（HTML查看器和主窗口按钮共用）"""
         # 检查 API Key
         if not ai_config.get_api_key():
             QMessageBox.warning(
@@ -695,24 +706,14 @@ class EnhancedDataEditor(QMainWindow):
             )
             return
 
-        # 1. 选择 HTML 文件
-        start_dir = self.file_path or self.bd_file_path or ""
-        file, _ = QFileDialog.getOpenFileName(
-            self, "选择HTML文件",
-            directory=start_dir,
-            filter="HTML Files (*.html)"
-        )
-        if not file:
-            return
-
-        # 2. 调 AI（带进度提示）
+        # 调 AI（带进度提示）
         progress = QProgressDialog("AI 正在分析 HTML 文件...", None, 0, 0, self)
         progress.setWindowTitle("AI 分析中")
         progress.setWindowModality(Qt.WindowModal)
         progress.show()
         QApplication.processEvents()
         try:
-            result = ai_handler.extract_predictions_from_html(file)
+            result = ai_handler.extract_predictions_from_html(html_path)
         except Exception as e:
             progress.close()
             QMessageBox.critical(self, "错误", f"AI 调用失败：{str(e)}")
@@ -724,7 +725,7 @@ class EnhancedDataEditor(QMainWindow):
             QMessageBox.information(self, "提示", "AI 未提取到预测结果（今天可能无数据）")
             return
 
-        # 3. 预览确认
+        # 预览确认
         dialog = AiPreviewDialog(predictions, self.data_mode, parent=self)
         if dialog.exec_() == QDialog.Accepted:
             selected = dialog.get_selected()

@@ -3,7 +3,7 @@ from pathlib import Path
 from datetime import datetime, timezone, timedelta
 
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout,
-                             QComboBox, QLabel, QWidget, QMessageBox)
+                             QComboBox, QLabel, QWidget, QMessageBox, QPushButton)
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtCore import Qt, QUrl
 
@@ -44,6 +44,13 @@ class NewWindow(QDialog):
             self.day_combo.setCurrentIndex(idx)
             self.day_combo.currentTextChanged.connect(self._on_day_changed)
             toolbar_layout.addWidget(self.day_combo)
+
+            # AI 填入按钮：分析当前打开的 HTML
+            self.ai_btn = QPushButton("🤖 AI 填入")
+            self.ai_btn.setStyleSheet("font-size: 11px; padding: 1px 6px;")
+            self.ai_btn.clicked.connect(self._on_ai_fill)
+            toolbar_layout.addWidget(self.ai_btn)
+
             toolbar_layout.addStretch()
             layout.addWidget(toolbar_widget)
 
@@ -58,6 +65,14 @@ class NewWindow(QDialog):
 
         except Exception as e:
             QMessageBox.warning(self, "错误", "当前HTML文件路径错误，请检查！")
+
+    def _on_ai_fill(self):
+        """AI 分析当前打开的 HTML 文件，结果填入主窗口"""
+        parent = self.parent()
+        if parent is None or not hasattr(parent, '_ai_fill_from_html'):
+            QMessageBox.warning(self, "提示", "无法获取主窗口")
+            return
+        parent._ai_fill_from_html(str(self.html_base_path))
 
     def closeEvent(self, event):
         if hasattr(self, 'web_view'):
