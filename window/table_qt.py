@@ -226,11 +226,11 @@ class EnhancedDataEditor(QMainWindow):
             self._rebuild_radio_buttons()
             self.refresh_table()
 
-        # Excel 占用状态检测定时器（每 2 秒检测一次）
-        self._excel_available = None  # None=未检测，True=可写，False=被占用
+        # Excel 占用状态检测定时器（每 5 秒检测一次，降低与 WebEngine 竞争）
+        self._excel_available = None  # None=未检测，True=可访问，False=被占用
         self._excel_check_timer = QTimer(self)
         self._excel_check_timer.timeout.connect(self._check_excel_status)
-        self._excel_check_timer.start(2000)
+        self._excel_check_timer.start(5000)
         self._check_excel_status()  # 启动时立即检测一次
         
     def init_ui(self):
@@ -523,6 +523,14 @@ class EnhancedDataEditor(QMainWindow):
             self._excel_available = None
             self.excel_status_dot.setStyleSheet("background-color: #9E9E9E; border-radius: 7px;")
             self.excel_status_label.setText("Excel 未检测")
+
+    def _ensure_excel_writable(self) -> bool:
+        """导出前实时检测 Excel 是否可写。可写返回 True，被占用返回 False 并提示。"""
+        self._check_excel_status()  # 实时刷新状态（不依赖定时器缓存）
+        if self._excel_available is False:
+            QMessageBox.warning(self, "警告", "Excel 文件被占用，请先关闭外部打开的 Excel 再导出")
+            return False
+        return True
 
     def _load_pic_config(self):
         """加载图片模式配置（与 mapping_data.txt 同格式：excel值：类别名）"""
@@ -1030,14 +1038,20 @@ class EnhancedDataEditor(QMainWindow):
             QMessageBox.warning(self, "警告", f"清空失败：{str(e)}")
 
     def _on_child_window_destroyed(self, obj):
-        """子窗口销毁时，清除引用（destroyed 信号在 WA_DeleteOnClose 后可能传递 None）"""
+        """子窗口销毁时，清除引用；恢复 Excel 检测定时器"""
         if obj is None or self.current_window is obj:
             self.current_window = None
+        # 子窗口（HTML查看器等）关闭后恢复 Excel 检测
+        if hasattr(self, '_excel_check_timer') and not self._excel_check_timer.isActive():
+            self._excel_check_timer.start(5000)
 
     def on_open_clicked(self):
         """
         打开文件：HTML模式打开HTML，图片模式打开txt
         """
+        # 打开子窗口前暂停 Excel 检测，避免与 WebEngine 渲染竞争导致卡死
+        if hasattr(self, '_excel_check_timer'):
+            self._excel_check_timer.stop()
         if self.current_window:
             try:
                 self.current_window.close()
@@ -1156,9 +1170,8 @@ class EnhancedDataEditor(QMainWindow):
         """
         导出数据 - 主线程收集验证，后台线程写入（不阻塞UI）
         """
-        # Excel 被占用时拦截导出
-        if self._excel_available is False:
-            QMessageBox.warning(self, "警告", "Excel 文件被占用，请先关闭外部打开的 Excel 再导出")
+        # 导出前实时检测 Excel 可写性（检测通过才继续）
+        if not self._ensure_excel_writable():
             return
         self.save_changes()
         selected_item = self.radio_group.checkedButton().text()
@@ -1208,9 +1221,8 @@ class EnhancedDataEditor(QMainWindow):
 
     def _export_bd(self, selected_item):
         """BD 模式导出 — 纵向追加写入，无需映射/MATCH_DICT"""
-        # Excel 被占用时拦截导出
-        if self._excel_available is False:
-            QMessageBox.warning(self, "警告", "Excel 文件被占用，请先关闭外部打开的 Excel 再导出")
+        # 导出前实时检测 Excel 可写性
+        if not self._ensure_excel_writable():
             return
         bd_info = self.bd_data_storage.get(selected_item, {})
         scores = bd_info.get("scores", [])
