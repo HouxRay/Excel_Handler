@@ -1508,7 +1508,30 @@ class EnhancedDataEditor(QMainWindow):
             # 重载 MATCH_DICT 和键盘映射（可能在设置中已修改）
             reload_match_dict()
             self.table.setItemDelegate(SpaceToZeroDelegate(self.table))
-            self._reload_with_new_paths(new_paths)
+
+            # 仅当路径变化时才重新加载数据（只改 AI/映射配置时不刷新，避免丢失未保存内容）
+            if self._paths_changed(new_paths):
+                self._reload_with_new_paths(new_paths)
+            else:
+                self.logger.info("设置已更新（仅 AI/映射配置），数据保持不变")
+
+    def _paths_changed(self, new_paths: dict) -> bool:
+        """判断路径是否有变化（决定是否重新加载数据）"""
+        cur = {
+            'html_folder_path': self.html_source_path,
+            'excel_path': self.excel_path or "",
+            'json_path': self.json_path or "",
+            'sheet_name': self.sheet_name or "",
+            'bd_folder_path': self.bd_source_path,
+            'bd_excel_path': self.bd_excel_path or "",
+            'bd_sheet_name': self.bd_sheet_name or "",
+            'bd_json_path': self.bd_json_path or "",
+        }
+        for key, cur_val in cur.items():
+            new_val = new_paths.get(key, "") or ""
+            if new_val != cur_val:
+                return True
+        return False
 
     def _reload_with_new_paths(self, new_paths: dict):
         """根据新路径重新初始化数据"""

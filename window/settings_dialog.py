@@ -2,7 +2,7 @@ import os
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QLineEdit, QPushButton, QFileDialog, QMessageBox,
                              QComboBox, QTabWidget, QTableWidget, QTableWidgetItem,
-                             QGroupBox, QWidget, QHeaderView, QCheckBox)
+                             QGroupBox, QWidget, QHeaderView, QCheckBox, QTextEdit)
 from PyQt5.QtCore import QSettings
 from openpyxl import load_workbook
 from src.mapping_manager import (get_match_dict, get_default_match_dict, save_match_dict,
@@ -190,6 +190,26 @@ class SettingsDialog(QDialog):
         ai_del_row.addWidget(ai_del_btn)
         ai_del_row.addStretch()
         ai_layout.addLayout(ai_del_row)
+
+        # HTML/文本提示词
+        ai_layout.addWidget(QLabel("HTML/文本提示词（AI 分析时使用）："))
+        self.ai_prompt_edit = QTextEdit(ai_config.get_system_prompt())
+        self.ai_prompt_edit.setMaximumHeight(140)
+        ai_layout.addWidget(self.ai_prompt_edit)
+
+        # 图片提示词
+        ai_layout.addWidget(QLabel("图片提示词（OCR 识别后使用）："))
+        self.ai_prompt_pic_edit = QTextEdit(ai_config.get_system_prompt_pic())
+        self.ai_prompt_pic_edit.setMaximumHeight(140)
+        ai_layout.addWidget(self.ai_prompt_pic_edit)
+
+        # 恢复默认提示词
+        prompt_reset_row = QHBoxLayout()
+        prompt_reset_btn = QPushButton("🔄 恢复默认提示词")
+        prompt_reset_btn.clicked.connect(self._on_ai_prompt_reset)
+        prompt_reset_row.addWidget(prompt_reset_btn)
+        prompt_reset_row.addStretch()
+        ai_layout.addLayout(prompt_reset_row)
 
         ai_layout.addStretch()
         tabs.addTab(ai_tab, "AI 设置")
@@ -397,6 +417,12 @@ class SettingsDialog(QDialog):
             self.ai_status_label.setText("状态：⚪ 未配置")
             self.ai_status_label.setStyleSheet("color: #999; font-size: 11px;")
 
+    def _on_ai_prompt_reset(self):
+        """恢复默认提示词"""
+        self.ai_prompt_edit.setPlainText(ai_config.DEFAULT_SYSTEM_PROMPT)
+        self.ai_prompt_pic_edit.setPlainText(ai_config.DEFAULT_SYSTEM_PROMPT_PIC)
+        self._mark_changed()
+
     @staticmethod
     def _get_last_dir(key: str, default: str = "") -> str:
         settings = QSettings("config.ini", QSettings.IniFormat)
@@ -506,6 +532,11 @@ class SettingsDialog(QDialog):
             self.ai_key_edit.text(),
             self.ai_model_edit.text(),
             self.ai_base_edit.text(),
+        )
+        # 保存提示词
+        ai_config.save_system_prompts(
+            self.ai_prompt_edit.toPlainText(),
+            self.ai_prompt_pic_edit.toPlainText(),
         )
 
         self.current_paths = {
