@@ -218,6 +218,7 @@ class EnhancedDataEditor(QMainWindow):
         if self.data_mode == 'bd':
             self._load_bd_config_with_progress()  # BD-only 启动时预加载 BD 数据
 
+        self._last_ai_source = ""  # 最近一次 AI 分析的源文件（供历史对话框定位）
         self.init_ui()
 
         # 如果是 BD 模式，init_ui 中 left_items 为空构建了空列表，需要重建
