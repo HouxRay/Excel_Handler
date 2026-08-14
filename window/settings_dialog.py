@@ -85,6 +85,19 @@ class SettingsDialog(QDialog):
         txt_layout.addWidget(open_txt_btn)
         path_layout.addWidget(txt_group)
 
+        # -- AI 数据目录 --
+        from src import ai_storage as _ai_storage
+        ai_dir_group = QGroupBox("AI 数据")
+        ai_dir_layout = QHBoxLayout(ai_dir_group)
+        ai_dir_layout.addWidget(QLabel("AI 数据目录:"))
+        self.ai_dir_edit = QLineEdit(_ai_storage.AI_DIR)
+        self.ai_dir_edit.setReadOnly(True)
+        ai_dir_layout.addWidget(self.ai_dir_edit)
+        open_ai_btn = QPushButton("打开目录")
+        open_ai_btn.clicked.connect(self._open_ai_dir)
+        ai_dir_layout.addWidget(open_ai_btn)
+        path_layout.addWidget(ai_dir_group)
+
         path_layout.addStretch()
         tabs.addTab(path_tab, "路径设置")
 
@@ -476,6 +489,17 @@ class SettingsDialog(QDialog):
             return
         try:
             os.startfile(self.txt_dir)
+        except Exception as e:
+            QMessageBox.warning(self, "错误", f"打开目录失败: {str(e)}")
+
+    def _open_ai_dir(self):
+        """在系统文件管理器中打开 AI 数据目录"""
+        from src import ai_storage
+        if not os.path.exists(ai_storage.AI_DIR):
+            QMessageBox.warning(self, "提示", "AI 数据目录不存在")
+            return
+        try:
+            os.startfile(ai_storage.AI_DIR)
         except Exception as e:
             QMessageBox.warning(self, "错误", f"打开目录失败: {str(e)}")
 

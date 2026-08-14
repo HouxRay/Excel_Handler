@@ -7,13 +7,15 @@ AI_DIR = os.path.join("json", "ai")
 
 
 def save_ai_result(result: dict, source_file: str = "", mode: str = "") -> str:
-    """保存 AI 结果到 json/ai/，返回文件路径"""
-    os.makedirs(AI_DIR, exist_ok=True)
+    """保存 AI 结果到 json/ai/<日期>/，返回文件路径"""
+    # 按日期分子目录
+    date_dir = os.path.join(AI_DIR, datetime.now().strftime("%Y-%m-%d"))
+    os.makedirs(date_dir, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     base = os.path.splitext(os.path.basename(source_file or "unknown"))[0]
     # 文件名清洗（去掉非法字符）
     base = "".join(c if c.isalnum() or c in "-_" else "_" for c in base)
-    path = os.path.join(AI_DIR, f"ai_{ts}_{base}.json")
+    path = os.path.join(date_dir, f"ai_{ts}_{base}.json")
 
     data = {
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -29,30 +31,44 @@ def save_ai_result(result: dict, source_file: str = "", mode: str = "") -> str:
 
 
 def load_ai_results() -> list[dict]:
-    """加载所有已保存的 AI 结果（按时间倒序）。
+    """加载所有已保存的 AI 结果（按时间倒序，递归所有日期子目录）。
 
     Returns: [{"filepath", "timestamp", "source_file", "mode", "predictions_count"}]
     """
     if not os.path.isdir(AI_DIR):
         return []
     results = []
-    for fname in sorted(os.listdir(AI_DIR), reverse=True):
-        if not fname.endswith(".json"):
-            continue
-        path = os.path.join(AI_DIR, fname)
-        try:
-            with open(path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            results.append({
-                "filepath": path,
-                "timestamp": data.get("timestamp", ""),
-                "source_file": data.get("source_file", ""),
-                "mode": data.get("mode", ""),
-                "predictions_count": len(data.get("predictions", [])),
-            })
-        except Exception:
-            continue
+    # 遍历所有日期子目录（兼容旧的直接放在根目录的 json）
+    entries = sorted(os.listdir(AI_DIR), reverse=True)
+    for entry in entries:
+        path = os.path.join(AI_DIR, entry)
+        if os.path.isdir(path):
+            # 日期子目录
+            for fname in sorted(os.listdir(path), reverse=True):
+                if not fname.endswith(".json"):
+                    continue
+                fpath = os.path.join(path, fname)
+                _append_result(results, fpath)
+        elif entry.endswith(".json"):
+            # 旧的根目录 json
+            _append_result(results, path)
     return results
+
+
+def _append_result(results: list, path: str):
+    """辅助：加载单个 AI 结果文件并加入列表"""
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        results.append({
+            "filepath": path,
+            "timestamp": data.get("timestamp", ""),
+            "source_file": data.get("source_file", ""),
+            "mode": data.get("mode", ""),
+            "predictions_count": len(data.get("predictions", [])),
+        })
+    except Exception:
+        pass
 
 
 def load_ai_result(path: str) -> dict:
