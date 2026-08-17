@@ -6,6 +6,8 @@ a = Analysis(
     pathex=[],
     binaries=[
         ('C:/Anaconda3/envs/qt310/Library/bin/libexpat.dll', '.'),
+        ('C:/Anaconda3/envs/qt310/Library/bin/libssl-3-x64.dll', '.'),
+        ('C:/Anaconda3/envs/qt310/Library/bin/libcrypto-3-x64.dll', '.'),
     ],
     datas=[
         ('mapping/mapping_data.txt', 'mapping'),
