@@ -152,10 +152,7 @@ def parse_ai_result(response_text: str, mode: str = 'jc') -> dict:
     data = _extract_json(text)
     if data is not None:
         preds = _normalize_predictions(data)
-        # 规范化 scores 为分组格式（每组=一个机构的比分组）
-        for p in preds:
-            if "scores" in p:
-                p["scores"] = _normalize_scores_groups(p["scores"])
+        # JC 模式：保留原始平铺 scores（["21","11"]），不转分组
         return {
             "predictions": preds,
             "raw": text,
