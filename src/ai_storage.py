@@ -24,6 +24,8 @@ def save_ai_result(result: dict, source_file: str = "", mode: str = "") -> str:
         "method": result.get("method", ""),
         "raw": result.get("raw", ""),
         "predictions": result.get("predictions", []),
+        # 实际送入 AI 的提示词（system + user），供排查
+        "prompt": result.get("prompt", []),
     }
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)

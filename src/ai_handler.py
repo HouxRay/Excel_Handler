@@ -40,6 +40,8 @@ def extract_predictions_from_html(html_file_path: str, excel_path: str = None,
         response_text = ai_client.call_deepseek(messages)
         # 后端校验：过滤 AI 幻觉补全的编号
         result = ai_parser.parse_ai_result(response_text, mode=mode)
+        # 附带实际送入的提示词（供排查）
+        result['prompt'] = messages
         if mode == 'bd' and target_bd_code:
             # BD 硬约束：只保留当前文件的 BD 号
             result['predictions'] = [p for p in result.get('predictions', [])
