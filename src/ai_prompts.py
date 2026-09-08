@@ -21,7 +21,9 @@ def build_jc_messages(markdown_text: str, whitelist: dict,
     target_date: 目标日期描述（如"周二"），空则从内容识别
     """
     whitelist_str = _format_whitelist(whitelist)
-    date_hint = f"目标比赛日期：{target_date}\n" if target_date else "目标比赛日期：从预测文本中识别\n"
+    # 目标日期硬约束：从 ai_config 读取（真实今天或用户临时覆盖）
+    weekday = ai_config.get_target_weekday()
+    date_hint = f"今天是{weekday}。只输出 {weekday} 的比赛，其他星期的比赛一律丢弃。\n"
 
     user_text = f"""请分析以下预测文本，提取比赛结果。
 
@@ -67,12 +69,13 @@ def build_bd_messages(markdown_text: str, whitelist: dict,
 
 【规则】
 1. 只输出 BD 号 {target_bd_code if target_bd_code else ''} 的比赛
-2. 每行格式：机构名 + 冒号 + 北单号 + 该机构给出的比分（2位数字，1-3个，用空格分隔）
+2. 每行格式：机构名 + 冒号 + 北单号 + 该机构对【当前目标比赛】的比分（2位数字，用空格分隔，个数不限）
 3. 没有名字的机构，标注为 None1、None2、None3...（依次递增，区分不同实例，不要合并）
 4. 不同机构即使比分相同也要分别列出（机构不同）
-5. 以"Part 1 [输出结果]"开头
-6. 不要输出胜平负（胜/负/平）、队伍名、赔率等多余内容
-7. 最后用 JSON 包装：{{"predictions": [{{"label": "机构名", "code": "63", "scores": ["10","20"]}}, ...]}}
+5. 关键：若文本中某机构的比分对应的是【其他北单号】的比赛（如北单1、北单2），而不是当前目标号 {target_bd_code if target_bd_code else ''}，必须丢弃，不要输出
+6. 注意区分多组比赛，确保编号与比分匹配
+7. 不要输出胜平负（胜/负/平）、队伍名、赔率等多余内容
+8. 最后用 JSON 包装：{{"predictions": [{{"label": "机构名", "code": "{target_bd_code if target_bd_code else ''}", "scores": ["01","12"]}}, ...]}}
 
 【预测文本】
 {markdown_text}"""

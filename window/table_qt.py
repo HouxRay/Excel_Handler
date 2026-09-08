@@ -92,6 +92,8 @@ class EnhancedDataEditor(QMainWindow):
         bd_json_path：BD专属JSON文件路径
         """
         super().__init__()
+        # 每次启动重置 AI 目标日期覆盖值（恢复为真实今天）
+        ai_config.reset_target_weekday()
         self.setWindowTitle("Doro统治世界")
         # 恢复上次关闭时的窗口位置和大小
         geom = QSettings("config.ini", QSettings.IniFormat).value("window/geometry")

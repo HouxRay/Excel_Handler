@@ -78,26 +78,34 @@ DEFAULT_SYSTEM_PROMPT_BD = """# Role
 数据誊写员，你需要将北单(BD)比赛的预测文本分析并提取为结构化结果。
 
 # Task
-分析我给你的文本，提取其中【明确给出预测】的北单比赛结果，按北单号组织输出。
+分析我给你的文本，提取其中【明确给出预测】的北单比赛比分，按北单号组织输出。
 
 # Constraints
 1. 编号识别：
-  - 北单号（北单1、北单4）或纯数字（1、4）
+  - 北单号（北单1、北单3）或纯数字（1、3）
   - 【北单号是比赛的唯一身份】队伍名可能有翻译差异，一律以北单号为准
-2. 数据要求：
-  - 输出内容：北单号，胜平负信息，比分信息（例如：1 胜 平 20 21）
-  - 胜平负信息只包含文字，至少1个，至多2个，用空格分开
-  - 比分只保留2位数字，至少1个，至多2个；非数字比分略过
-3. 一个北单文件可能包含多个预测机构的观点，只提取【明确给出预测】的
-4. 若机构预测的北单号与当前比赛不符，丢弃
-5. 输出 JSON：{"predictions": [{"code": "1", "scores": ["20","21"], "wdl": ["胜"]}]}
-6. 除 JSON 外不要输出任何多余内容
+2. 输出格式（关键）：
+  - 输出为：机构名：北单号 比分1 比分2 ...
+  - 每个预测机构一行，输出前加上该机构的名称
+  - 相同预测机构比分并排输出，不同预测机构分开输出
+3. 比分要求：
+  - 只输出2位数字比分（例如：01、12、21）
+  - 比分个数没有上限（如 01 12 21 00 11）
+  - 比分会以 "x-x"、"x:x"、"xx" 形式给出，不会以 "x.x" 形式，注意不要誊写错误
+  - 非数字比分略过
+  - 胜平负信息可以识别但不作为主要输出
+4. 多组比赛区分（关键）：
+  - 部分预测会包含多组比赛（北单1、北单2、北单3...），必须区分编号对应的比赛
+  - 只输出【当前目标北单号】对应的比赛比分，其他编号的比分不输出
+  - 注意检查编号与队伍的匹配关系，避免编号与数据、比分预测不匹配
+5. 若某机构的预测不是当前目标北单号的比赛，丢弃
 
 # Execution Protocol
 在输出前，请自查：
-1. 只输出了【明确给出预测】的比赛，没有补全或脑补
-2. 北单号是否正确对齐（忽略队名差异）
-3. 比分是否都是2位数字"""
+1. 是否找到了正确的比分（不是小数、正负数等错误数据）
+2. 是否只输出了【当前目标北单号】的比分，没有混入其他比赛的比分
+3. 是否检查了编号与队伍的匹配关系
+4. 每个机构是否单独一行，机构名前缀是否正确"""
 
 
 def _machine_key() -> bytes:
@@ -201,3 +209,35 @@ def save_system_prompts(html_prompt: str, pic_prompt: str, bd_prompt: str = None
     settings.setValue("ai/system_prompt_pic", pic_prompt)
     if bd_prompt is not None:
         settings.setValue("ai/system_prompt_bd", bd_prompt)
+
+
+# --- 目标比赛日期管理（硬约束） ---
+# 模块级内存变量：单次启动内可覆盖目标星期，重启自动重置
+_override_weekday = None
+
+WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+
+
+def _get_beijing_weekday() -> str:
+    """返回北京时区真实今天的星期"""
+    from datetime import datetime, timezone, timedelta
+    beijing = timezone(timedelta(hours=8))
+    return WEEKDAYS[datetime.now(beijing).weekday()]
+
+
+def get_target_weekday() -> str:
+    """返回实际生效的目标星期（优先内存覆盖值，否则真实今天北京时区）"""
+    return _override_weekday if _override_weekday else _get_beijing_weekday()
+
+
+def set_target_weekday(wd: str):
+    """设置目标星期覆盖值（仅内存，单次启动有效）"""
+    global _override_weekday
+    if wd in WEEKDAYS:
+        _override_weekday = wd
+
+
+def reset_target_weekday():
+    """重置覆盖值，恢复真实今天（每次启动时调用）"""
+    global _override_weekday
+    _override_weekday = None

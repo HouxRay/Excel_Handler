@@ -196,6 +196,19 @@ class SettingsDialog(QDialog):
         ai_base_row.addWidget(self.ai_base_edit)
         ai_layout.addLayout(ai_base_row)
 
+        # 目标比赛日期
+        ai_date_row = QHBoxLayout()
+        ai_date_row.addWidget(QLabel("目标比赛日期:"))
+        self.ai_date_combo = QComboBox()
+        self.ai_date_combo.addItems(ai_config.WEEKDAYS)
+        # 选中当前生效值
+        cur = ai_config.get_target_weekday()
+        idx = ai_config.WEEKDAYS.index(cur) if cur in ai_config.WEEKDAYS else 0
+        self.ai_date_combo.setCurrentIndex(idx)
+        ai_date_row.addWidget(self.ai_date_combo)
+        ai_date_row.addWidget(QLabel("(仅本次启动有效，重启恢复今天)"))
+        ai_layout.addLayout(ai_date_row)
+
         # 删除按钮
         ai_del_row = QHBoxLayout()
         ai_del_btn = QPushButton("🗑️ 删除 API Key")
@@ -570,6 +583,9 @@ class SettingsDialog(QDialog):
             self.ai_prompt_pic_edit.toPlainText(),
             self.ai_prompt_bd_edit.toPlainText(),
         )
+        # 目标比赛日期（仅内存，本次启动有效）
+        if hasattr(self, 'ai_date_combo'):
+            ai_config.set_target_weekday(self.ai_date_combo.currentText())
 
         self.current_paths = {
             'mapping_path': self.mapping_edit.text(),
