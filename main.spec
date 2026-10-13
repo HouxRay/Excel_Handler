@@ -64,6 +64,13 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+# 排除 PyQt5 自带的 VC runtime DLL（与 onnxruntime 冲突，导致动态链接库初始化失败）
+# 保留根目录/系统/numpy 的正确版本
+VC_RUNTIME = ('msvcp140.dll', 'msvcp140_1.dll', 'msvcp140_2.dll',
+              'vcruntime140.dll', 'vcruntime140_1.dll')
+a.binaries = [b for b in a.binaries
+              if not (b[0].startswith('PyQt5') and b[0].split('\\')[-1].lower() in VC_RUNTIME)]
+
 pyz = PYZ(a.pure)
 
 exe = EXE(
@@ -72,7 +79,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='Excel誊写器4.0.0-preview',
+    name='Excel誊写器4.0.1-preview',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
