@@ -167,7 +167,7 @@ ExcelHandler/
 
 - 标签：`v4.0.1`
 - 仓库 `main` 对应发布版本；新功能在开发分支上迭代，稳定后合并并打新标签。
-- 完整变更记录见 Releases 页面。
+- 完整变更记录见 [Update.md](Update.md)；版本发布见 Releases 页面。
 
 ## 许可
 
