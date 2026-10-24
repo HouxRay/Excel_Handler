@@ -1,22 +1,57 @@
 from window.table_qt import EnhancedDataEditor
 from window.table_qt_2 import PathSelector
 from PyQt5.QtWidgets import QApplication
-from PyQt5.QtWidgets import QApplication, QMessageBox, QDialog
+from PyQt5.QtWidgets import QApplication, QMessageBox, QDialog, QLabel, QVBoxLayout
+from PyQt5.QtCore import Qt
 from src.zip_handler import ensure_extracted, cleanup_temp_dirs
 from src.log_setup import logger
 import sys
 
+
+def _show_startup_splash(parent=None, message="🚀 正在启动..."):
+    """显示加载提示窗口"""
+    splash = QDialog(parent)
+    splash.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+    splash.setFixedSize(240, 120)
+    layout = QVBoxLayout(splash)
+    label = QLabel(message)
+    label.setAlignment(Qt.AlignCenter)
+    label.setStyleSheet("font-size: 15px; font-weight: bold; color: #333;")
+    layout.addWidget(label)
+    # 居中显示
+    screen = QApplication.primaryScreen()
+    if screen:
+        geo = screen.availableGeometry()
+        splash.move(geo.center() - splash.rect().center())
+    splash.show()
+    QApplication.processEvents()
+    return splash
+
+
 def run():
     app = QApplication(sys.argv)
 
+    # 显示启动加载提示
+    splash = _show_startup_splash()
+
     # 第一步：获取路径
     path_selector = PathSelector()
+    # 路径选择器弹出前关闭加载提示（避免被模态对话框遮挡悬顶）
+    if splash:
+        splash.close()
     result = path_selector.exec_()  # 使用exec_()模态显示对话框
 
     if result != QDialog.Accepted:
         return  # 用户取消选择
 
     folder_path, excel_path, json_path, sheet_name, bd_folder, bd_excel, bd_sheet, bd_json = path_selector.selected_paths
+
+    # 保留原始路径（用于设置界面显示，可能是 zip 或目录）
+    folder_path_raw = folder_path
+    bd_folder_raw = bd_folder
+
+    # 显示数据读取加载提示（路径选择确认后 → 主窗口就绪前）
+    data_splash = _show_startup_splash(message="📊 正在读取数据...")
 
     # 第二步：如果是 .zip 文件，自动解压到临时目录
     try:
@@ -25,20 +60,30 @@ def run():
         if bd_folder:
             bd_folder = ensure_extracted(bd_folder, logger)
     except ValueError as e:
+        data_splash.close()
         QMessageBox.critical(None, "解压错误", str(e))
         return
 
     # 验证路径有效性
     # JC Excel 非必需（BD-only 场景），但 sheet 在提供了 Excel 时必需
     if not folder_path and not bd_folder:
+        data_splash.close()
         QMessageBox.critical(None, "错误", "必须选择 HTML 文件夹路径或北单文件夹路径")
         return
 
-    # 保存 mapping_path 默认值（如果尚未设置）
+    # 保存路径到 config.ini（供下次"自动填入"使用）
     from PyQt5.QtCore import QSettings
     settings = QSettings("config.ini", QSettings.IniFormat)
     if not settings.value("paths/mapping_path"):
         settings.setValue("paths/mapping_path", "mapping/mapping_data.txt")
+    settings.setValue("paths/html_folder_path", folder_path_raw or "")
+    settings.setValue("paths/excel_path", excel_path or "")
+    settings.setValue("paths/json_path", json_path or "")
+    settings.setValue("paths/sheet_name", sheet_name or "")
+    settings.setValue("paths/bd_folder_path", bd_folder_raw or "")
+    settings.setValue("paths/bd_excel_path", bd_excel or "")
+    settings.setValue("paths/bd_sheet_name", bd_sheet or "")
+    settings.setValue("paths/bd_json_path", bd_json or "")
 
     try:
         # 显示主窗口（恢复上次的位置和大小）
@@ -49,12 +94,17 @@ def run():
                                          bd_file_path=bd_folder or "",
                                          bd_excel_path=bd_excel or "",
                                          bd_sheet_name=bd_sheet or "",
-                                         bd_json_path=bd_json or "")
+                                         bd_json_path=bd_json or "",
+                                         html_source_path=folder_path_raw,
+                                         bd_source_path=bd_folder_raw)
         # 恢复上次的窗口几何
         geom = settings.value("window/geometry")
         if geom:
             main_window.restoreGeometry(geom)
         main_window.show()
+
+        # 主窗口就绪后关闭数据加载提示
+        data_splash.close()
 
         # 退出时清理临时目录
         app.aboutToQuit.connect(lambda: cleanup_temp_dirs(logger))
@@ -62,6 +112,7 @@ def run():
         sys.exit(app.exec_())
 
     except Exception as e:
+        data_splash.close()
         QMessageBox.critical(None, "初始化错误", f"初始化失败: {str(e)}")
 
 if __name__ == "__main__":

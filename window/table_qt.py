@@ -8,8 +8,8 @@ from datetime import datetime
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QScrollArea, QRadioButton, QTableWidget, QTableWidgetItem,
                              QHeaderView, QPushButton, QButtonGroup, QDialog, QLabel, QMessageBox,
-                             QTextEdit, QProgressDialog, QStyledItemDelegate)
-from PyQt5.QtCore import Qt, QThread, QEvent, QSettings
+                             QTextEdit, QProgressDialog, QStyledItemDelegate, QFileDialog)
+from PyQt5.QtCore import Qt, QThread, QEvent, QSettings, QTimer
 from PyQt5.QtGui import QIcon
 
 from src.Excel_Info import GetWriteInfo
@@ -20,8 +20,11 @@ from src.data_loader import load_pic_config, load_json_to_storage, load_bd_json,
 from src.exporter import collect_export_write_ops, collect_sort_stats
 from src.log_setup import logger, setup_logger, QTextEditLogger
 from src.zip_handler import ensure_extracted
+from src import ai_handler, ai_config, ai_storage, ai_alignment
 from window.html_viewer import NewWindow
 from window.settings_dialog import SettingsDialog
+from window.ai_preview_dialog import AiPreviewDialog
+from window.ai_history_dialog import AiHistoryDialog
 
 
 
@@ -72,7 +75,9 @@ class EnhancedDataEditor(QMainWindow):
                  bd_file_path:str = None,
                  bd_excel_path:str = None,
                  bd_sheet_name:str = None,
-                 bd_json_path:str = None):
+                 bd_json_path:str = None,
+                 html_source_path:str = None,
+                 bd_source_path:str = None):
         """
         top_data：队伍数据
         left_items：html文件名称
@@ -87,6 +92,8 @@ class EnhancedDataEditor(QMainWindow):
         bd_json_path：BD专属JSON文件路径
         """
         super().__init__()
+        # 每次启动重置 AI 目标日期覆盖值（恢复为真实今天）
+        ai_config.reset_target_weekday()
         self.setWindowTitle("Doro统治世界")
         # 恢复上次关闭时的窗口位置和大小
         geom = QSettings("config.ini", QSettings.IniFormat).value("window/geometry")
@@ -116,13 +123,20 @@ class EnhancedDataEditor(QMainWindow):
                 top_data = None
                 left_items = []
                 excel_name = {}
-        self.file_path = file_path  # 存储文件夹路径，供图片模式查找txt文件
+        self.file_path = file_path  # 存储文件夹路径（解压后目录），供图片模式查找txt文件
         self.sheet_name = sheet_name  # 存储sheet名，供后台线程使用
         self.excel_path = excel_path  # 存储Excel路径，供BD模式导出使用
-        self.bd_file_path = bd_file_path or ""  # 北单HTML文件夹路径
+        self.json_path = json_path  # 存储JSON路径
+        self.bd_file_path = bd_file_path or ""  # 北单HTML文件夹路径（解压后目录）
         self.bd_excel_path = bd_excel_path or ""  # BD专属Excel路径
         self.bd_sheet_name = bd_sheet_name or ""  # BD专属Sheet名称
         self.bd_json_path = bd_json_path or ""  # BD专属JSON路径
+        self.html_source_path = html_source_path or file_path or ""  # 原始路径（可能zip）
+        self.bd_source_path = bd_source_path or bd_file_path or ""  # 原始BD路径
+        # 图片模式 txt 保存目录（软件根目录/txt，按日期分目录）
+        self.txt_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'txt'
+        )
         self.mapping = {}  # 先初始化空字典，HTML模式下才实际填充
 
         # 从 QSettings 加载持久化的 MATCH_DICT（有则用，无则默认）
@@ -206,12 +220,20 @@ class EnhancedDataEditor(QMainWindow):
         if self.data_mode == 'bd':
             self._load_bd_config_with_progress()  # BD-only 启动时预加载 BD 数据
 
+        self._last_ai_source = ""  # 最近一次 AI 分析的源文件（供历史对话框定位）
         self.init_ui()
 
         # 如果是 BD 模式，init_ui 中 left_items 为空构建了空列表，需要重建
         if self.data_mode == 'bd':
             self._rebuild_radio_buttons()
             self.refresh_table()
+
+        # Excel 占用状态检测定时器（每 5 秒检测一次，降低与 WebEngine 竞争）
+        self._excel_available = None  # None=未检测，True=可访问，False=被占用
+        self._excel_check_timer = QTimer(self)
+        self._excel_check_timer.timeout.connect(self._check_excel_status)
+        self._excel_check_timer.start(5000)
+        self._check_excel_status()  # 启动时立即检测一次
         
     def init_ui(self):
         main_widget = QWidget()
@@ -318,8 +340,24 @@ class EnhancedDataEditor(QMainWindow):
         """)
         clear_btn.clicked.connect(self._clear_current_page)
 
+        exit_open_btn = QPushButton("📤 退出并打开Excel目录")
+        exit_open_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                font-weight: bold;
+                padding: 6px 12px;
+                border-radius: 4px;
+                border: 1px solid #45a049;
+            }
+            QPushButton:hover { background-color: #45a049; border: 1px solid #3d8b40; }
+            QPushButton:pressed { background-color: #3d8b40; }
+        """)
+        exit_open_btn.clicked.connect(self._exit_and_open_excel_dir)
+
         green_btn_layout.addWidget(reload_btn)
         green_btn_layout.addWidget(clear_btn)
+        green_btn_layout.addWidget(exit_open_btn)
         green_btn_layout.addStretch()
 
         # ── 橙色按钮行 ──
@@ -351,9 +389,14 @@ class EnhancedDataEditor(QMainWindow):
         settings_btn.setStyleSheet(orange_style)
         settings_btn.clicked.connect(self._open_settings)
 
+        self.ai_fill_btn = QPushButton("🤖 AI 填入")
+        self.ai_fill_btn.setStyleSheet(orange_style)
+        self.ai_fill_btn.clicked.connect(self._on_ai_fill)
+
         orange_btn_layout.addWidget(self.fill_btn)
         orange_btn_layout.addWidget(refresh_btn)
         orange_btn_layout.addWidget(settings_btn)
+        orange_btn_layout.addWidget(self.ai_fill_btn)
         orange_btn_layout.addStretch()
 
         # ── 蓝色按钮行 ──
@@ -411,6 +454,18 @@ class EnhancedDataEditor(QMainWindow):
         
         ######### 2025-4-16 新增  ########     
          
+        # Excel 占用状态指示灯
+        status_row = QHBoxLayout()
+        self.excel_status_dot = QLabel()
+        self.excel_status_dot.setFixedSize(14, 14)
+        self.excel_status_dot.setStyleSheet("background-color: #9E9E9E; border-radius: 7px;")
+        self.excel_status_label = QLabel("Excel 未检测")
+        self.excel_status_label.setStyleSheet("color: #666; font-size: 10px;")
+        status_row.addWidget(self.excel_status_dot)
+        status_row.addWidget(self.excel_status_label)
+        status_row.addStretch()
+        right_layout.addLayout(status_row)
+
         # 在右侧布局中添加日志输出区域
         self.log_output = QTextEdit()
         self.log_output.setReadOnly(True)  # 只读模式
@@ -426,7 +481,7 @@ class EnhancedDataEditor(QMainWindow):
         right_layout.addWidget(self.log_output)  # 添加到右侧布局
 
         # 版本号标签（不起眼的右下角）
-        version_label = QLabel("v3.2.0")
+        version_label = QLabel("v4.0.1-preview")
         version_label.setStyleSheet("color: #999; font-size: 10px; padding: 2px;")
         version_label.setAlignment(Qt.AlignRight | Qt.AlignBottom)
         right_layout.addWidget(version_label)
@@ -441,6 +496,43 @@ class EnhancedDataEditor(QMainWindow):
         """捕获 print 输出并重定向到日志"""
         if text.strip():  # 只记录非空文本
             self.logger.info(text.strip())
+
+    def _check_excel_status(self):
+        """检测当前 Excel 文件是否可写（Windows 文件锁检测）"""
+        excel_path = self.bd_excel_path or self.excel_path
+        if not excel_path or not os.path.exists(excel_path):
+            self._set_excel_status(None)  # 灰色，文件不存在
+            return
+        try:
+            import msvcrt
+            with open(excel_path, 'r+b') as f:
+                msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+            self._set_excel_status(True)  # 可写 → 绿
+        except (PermissionError, OSError):
+            self._set_excel_status(False)  # 被占用 → 红
+
+    def _set_excel_status(self, available):
+        """更新指示灯状态"""
+        if available is True and self._excel_available is not True:
+            self._excel_available = True
+            self.excel_status_dot.setStyleSheet("background-color: #4CAF50; border-radius: 7px;")
+            self.excel_status_label.setText("Excel 可编辑")
+        elif available is False and self._excel_available is not False:
+            self._excel_available = False
+            self.excel_status_dot.setStyleSheet("background-color: #F44336; border-radius: 7px;")
+            self.excel_status_label.setText("Excel 被占用")
+        elif available is None and self._excel_available is not None:
+            self._excel_available = None
+            self.excel_status_dot.setStyleSheet("background-color: #9E9E9E; border-radius: 7px;")
+            self.excel_status_label.setText("Excel 未检测")
+
+    def _ensure_excel_writable(self) -> bool:
+        """导出前实时检测 Excel 是否可写。可写返回 True，被占用返回 False 并提示。"""
+        self._check_excel_status()  # 实时刷新状态（不依赖定时器缓存）
+        if self._excel_available is False:
+            QMessageBox.warning(self, "警告", "Excel 文件被占用，请先关闭外部打开的 Excel 再导出")
+            return False
+        return True
 
     def _load_pic_config(self):
         """加载图片模式配置（与 mapping_data.txt 同格式：excel值：类别名）"""
@@ -546,6 +638,13 @@ class EnhancedDataEditor(QMainWindow):
         # 刷新表格
         self.refresh_table()
 
+    def _get_today_txt_path(self, category_name):
+        """返回当天 txt 文件的完整路径（软件目录/txt/YYYY-MM-DD/类别.txt）"""
+        today = datetime.now().strftime('%Y-%m-%d')
+        day_dir = os.path.join(self.txt_dir, today)
+        os.makedirs(day_dir, exist_ok=True)
+        return os.path.join(day_dir, f"{category_name}.txt")
+
     def _on_fill_from_txt(self):
         """填入数据：图片模式从txt，BD模式从HTML详情文件解析比分"""
         selected_item = self.radio_group.checkedButton().text()
@@ -554,13 +653,8 @@ class EnhancedDataEditor(QMainWindow):
             self._fill_bd_from_html(selected_item)
             return
 
-        # 图片模式（原有逻辑）
-        txt_dir = self.file_path or self.bd_file_path
-        if not txt_dir:
-            QMessageBox.warning(self, "警告", "未设置文件夹路径")
-            return
-
-        txt_path = os.path.join(txt_dir, f"{selected_item}.txt")
+        # 图片模式：从当天日期目录读取 txt
+        txt_path = self._get_today_txt_path(selected_item)
         if not os.path.exists(txt_path):
             QMessageBox.warning(self, "警告", f"未找到文件: {txt_path}")
             return
@@ -602,6 +696,194 @@ class EnhancedDataEditor(QMainWindow):
                 QMessageBox.warning(self, "提示", "未找到匹配的编号")
         except Exception as e:
             QMessageBox.warning(self, "警告", f"读取失败: {str(e)}")
+
+    def _on_ai_fill(self):
+        """AI 填入：选择新预测或查看历史"""
+        msg = QMessageBox(self)
+        msg.setWindowTitle("AI 填入")
+        msg.setText("请选择操作：")
+        btn_new = msg.addButton("🤖 新预测", QMessageBox.ActionRole)
+        btn_history = msg.addButton("📂 历史预测", QMessageBox.ActionRole)
+        msg.addButton("取消", QMessageBox.RejectRole)
+        msg.exec_()
+        clicked = msg.clickedButton()
+
+        if clicked == btn_new:
+            start_dir = self.file_path or self.bd_file_path or ""
+            file, _ = QFileDialog.getOpenFileName(
+                self, "选择HTML或图片文件",
+                directory=start_dir,
+                filter="HTML Files (*.html);;图片文件 (*.png *.jpg *.jpeg *.bmp)"
+            )
+            if file:
+                self._ai_fill_from_path(file)
+        elif clicked == btn_history:
+            self._show_ai_history()
+
+    def _show_ai_history(self):
+        """查看历史 AI 预测结果（带日期/文件名筛选）"""
+        current_file = os.path.splitext(os.path.basename(self._last_ai_source or ""))[0]
+        dlg = AiHistoryDialog(current_file=current_file, parent=self)
+        if dlg.exec_() != QDialog.Accepted:
+            return
+        filepath = dlg.get_selected_filepath()
+        if not filepath:
+            return
+
+        data = ai_storage.load_ai_result(filepath)
+        predictions = data.get("predictions", [])
+        if not predictions:
+            QMessageBox.information(self, "提示", "该记录无预测数据")
+            return
+
+        mode_hint = 'bd' if data.get('mode') == 'bd' else 'jc'
+        dialog = AiPreviewDialog(
+            predictions, mode_hint, parent=self,
+            raw=data.get("raw", ""),
+            method=data.get("method", ""),
+            source_file=data.get("source_file", ""),
+        )
+        if dialog.exec_() == QDialog.Accepted:
+            selected = dialog.get_selected()
+            if not selected:
+                return
+            self._apply_ai_predictions(selected, source_file=data.get("source_file", ""))
+            self.logger.info(f"从历史复用 {len(selected)} 条预测")
+            self.log_output.append(f"✅ 从历史复用 {len(selected)} 条预测")
+
+    def _ai_fill_from_html(self, html_path: str):
+        """HTML 查看器调用：分析指定 HTML 文件"""
+        self._ai_fill_from_path(html_path)
+
+    def _ai_fill_from_path(self, path: str):
+        """AI 分析指定 HTML/图片文件 → 预览 → 填入（查看器和主窗口共用）"""
+        self._last_ai_source = path  # 记录当前源文件，供历史对话框定位
+        # 检查 API Key
+        if not ai_config.get_api_key():
+            QMessageBox.warning(
+                self, "提示",
+                "未配置 AI API Key\n请在 config.ini 的 [ai] 段设置 ai/api_key，或稍后在设置中配置"
+            )
+            return
+
+        # 按扩展名分流 HTML / 图片
+        ext = os.path.splitext(path)[1].lower()
+        if ext in ('.png', '.jpg', '.jpeg', '.bmp'):
+            analyzer = ai_handler.extract_predictions_from_image
+            progress_msg = "AI 正在识别图片...（首次加载 OCR 模型较慢）"
+            analyzer_kwargs = {}
+        else:
+            analyzer = ai_handler.extract_predictions_from_html
+            progress_msg = "AI 正在分析 HTML 文件..."
+            # 传当前模式的 Excel 白名单约束编号
+            if self.data_mode == 'bd':
+                target_bd = ai_alignment.extract_bd_code_from_filename(os.path.basename(path))
+                analyzer_kwargs = {
+                    'excel_path': self.bd_excel_path or "",
+                    'sheet_name': self.bd_sheet_name or "",
+                    'mode': 'bd',
+                    'target_bd_code': target_bd,
+                }
+            else:
+                analyzer_kwargs = {
+                    'excel_path': self.excel_path or "",
+                    'sheet_name': self.sheet_name or "",
+                    'mode': 'jc',
+                }
+
+        # 调 AI（带进度提示）
+        progress = QProgressDialog(progress_msg, None, 0, 0, self)
+        progress.setWindowTitle("AI 分析中")
+        progress.setWindowModality(Qt.WindowModal)
+        progress.show()
+        QApplication.processEvents()
+        try:
+            result = analyzer(path, **analyzer_kwargs)
+        except Exception as e:
+            progress.close()
+            QMessageBox.critical(self, "错误", f"AI 调用失败：{str(e)}")
+            return
+        progress.close()
+
+        # 自动保存 AI 结果（防误关窗口后结果丢失，可复用）
+        mode_hint = 'bd' if self.data_mode == 'bd' else 'jc'
+        try:
+            ai_storage.save_ai_result(result, source_file=path, mode=mode_hint)
+        except Exception:
+            pass
+
+        predictions = result.get("predictions", [])
+        if not predictions:
+            QMessageBox.information(self, "提示", "AI 未提取到预测结果（今天可能无数据）")
+            return
+
+        # 预览确认
+        dialog = AiPreviewDialog(
+            predictions, self.data_mode, parent=self,
+            raw=result.get("raw", ""),
+            method=result.get("method", ""),
+            source_file=path,
+        )
+        if dialog.exec_() == QDialog.Accepted:
+            selected = dialog.get_selected()
+            if not selected:
+                QMessageBox.information(self, "提示", "未勾选任何结果")
+                return
+            self._apply_ai_predictions(selected, source_file=path)
+            self.logger.info(f"AI 填入 {len(selected)} 条预测")
+            self.log_output.append(f"✅ AI 已填入 {len(selected)} 条预测")
+
+    def _apply_ai_predictions(self, predictions: list, source_file: str = ""):
+        """将确认的 AI 预测写入对应模式的数据存储"""
+        if self.data_mode == 'bd':
+            self._apply_ai_bd(predictions)
+        else:
+            self._apply_ai_jc(predictions, source_file=source_file)
+        self.is_dirty = True
+        self.refresh_table()
+
+    def _apply_ai_bd(self, predictions: list):
+        """BD 模式：写入 bd_data_storage（汇总所有机构的比分分组）"""
+        all_groups = []
+        code_target = None
+        for pred in predictions:
+            code = str(pred.get("code", ""))
+            scores = pred.get("scores", [])
+            if not code_target:
+                code_target = code
+            # 该机构的比分组（已是 2 位数字分组）
+            group = [str(x).strip() for x in scores if str(x).strip().isdigit()]
+            if group:
+                all_groups.append(group)
+        # 一次性写入该比赛的所有比分分组
+        if code_target:
+            for info in self.bd_data_storage.values():
+                if info.get("code") == code_target:
+                    info["scores"] = all_groups
+                    break
+
+    def _apply_ai_jc(self, predictions: list, source_file: str = ""):
+        """JC/HTML 模式：写入 data_storage"""
+        # 机构名：pred 无 label 时，从 source_file 文件名推断
+        default_category = os.path.splitext(os.path.basename(source_file or ""))[0] if source_file else ""
+        for pred in predictions:
+            category = pred.get("label", "") or pred.get("category", "") or default_category
+            code = str(pred.get("code", "")).zfill(3)
+            scores = pred.get("scores", [])
+            # 扁平化 scores 到 4 个比分位
+            flat = []
+            for s in scores:
+                if isinstance(s, list):
+                    flat.extend(str(x).strip() for x in s)
+                else:
+                    flat.append(str(s).strip())
+            vals = [x for x in flat if x]
+            while len(vals) < 4:
+                vals.append("")
+            vals = vals[:4]
+            # 写入匹配的 category+code
+            if category in self.data_storage and code in self.data_storage[category]:
+                self.data_storage[category][code] = vals
 
     def _fill_bd_from_html(self, selected_item):
         """BD 模式：从北单N.html 详情文件中解析比分并填入"""
@@ -759,14 +1041,20 @@ class EnhancedDataEditor(QMainWindow):
             QMessageBox.warning(self, "警告", f"清空失败：{str(e)}")
 
     def _on_child_window_destroyed(self, obj):
-        """子窗口销毁时，清除引用（destroyed 信号在 WA_DeleteOnClose 后可能传递 None）"""
+        """子窗口销毁时，清除引用；恢复 Excel 检测定时器"""
         if obj is None or self.current_window is obj:
             self.current_window = None
+        # 子窗口（HTML查看器等）关闭后恢复 Excel 检测
+        if hasattr(self, '_excel_check_timer') and not self._excel_check_timer.isActive():
+            self._excel_check_timer.start(5000)
 
     def on_open_clicked(self):
         """
         打开文件：HTML模式打开HTML，图片模式打开txt
         """
+        # 打开子窗口前暂停 Excel 检测，避免与 WebEngine 渲染竞争导致卡死
+        if hasattr(self, '_excel_check_timer'):
+            self._excel_check_timer.stop()
         if self.current_window:
             try:
                 self.current_window.close()
@@ -811,14 +1099,28 @@ class EnhancedDataEditor(QMainWindow):
             except:
                 QMessageBox.warning(self, "警告", "文件路径不存在，或者文件名称错误")
 
+    def _show_reload_splash(self):
+        """重新选择路径后显示数据读取加载提示"""
+        splash = QDialog(None)
+        splash.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        splash.setFixedSize(240, 120)
+        layout = QVBoxLayout(splash)
+        label = QLabel("📊 正在读取数据...")
+        label.setAlignment(Qt.AlignCenter)
+        label.setStyleSheet("font-size: 15px; font-weight: bold; color: #333;")
+        layout.addWidget(label)
+        screen = QApplication.primaryScreen()
+        if screen:
+            geo = screen.availableGeometry()
+            splash.move(geo.center() - splash.rect().center())
+        splash.show()
+        QApplication.processEvents()
+        return splash
+
     def _show_pic_txt_dialog(self, selected_item):
         """Pic模式：可编辑的txt对话框，文件不存在时保存即创建"""
-        txt_dir = self.file_path or self.bd_file_path
-        if not txt_dir:
-            QMessageBox.warning(self, "警告", "未设置文件夹路径，请在路径选择器中设置 HTML 或北单文件夹")
-            return
-
-        txt_path = os.path.join(txt_dir, f"{selected_item}.txt")
+        # 保存到软件目录/txt/当天日期/类别.txt
+        txt_path = self._get_today_txt_path(selected_item)
 
         # 读取已有内容（不存在则为空）
         content = ""
@@ -871,6 +1173,9 @@ class EnhancedDataEditor(QMainWindow):
         """
         导出数据 - 主线程收集验证，后台线程写入（不阻塞UI）
         """
+        # 导出前实时检测 Excel 可写性（检测通过才继续）
+        if not self._ensure_excel_writable():
+            return
         self.save_changes()
         selected_item = self.radio_group.checkedButton().text()
 
@@ -919,6 +1224,9 @@ class EnhancedDataEditor(QMainWindow):
 
     def _export_bd(self, selected_item):
         """BD 模式导出 — 纵向追加写入，无需映射/MATCH_DICT"""
+        # 导出前实时检测 Excel 可写性
+        if not self._ensure_excel_writable():
+            return
         bd_info = self.bd_data_storage.get(selected_item, {})
         scores = bd_info.get("scores", [])
         code = bd_info.get("code", "")
@@ -1094,7 +1402,7 @@ class EnhancedDataEditor(QMainWindow):
                     json.dump(export_data, f, ensure_ascii=False, indent=4)
                 logger.info(f"BD JSON 导出成功: {json_path} ({len(export_data)} 场比赛)")
                 self.is_dirty = False
-                return
+                return True
 
             # JC/HTML 模式（原有逻辑）
             # 转置为 code→category→scores 格式
@@ -1110,17 +1418,60 @@ class EnhancedDataEditor(QMainWindow):
                 json.dump(new_json_data, f, ensure_ascii=False, indent=4)
             logger.info(f"JSON文件导出成功: {json_path}")
             self.is_dirty = False
+            return True
         except Exception as e:
             logger.exception("JSON导出失败")
             QMessageBox.critical(self, "错误", f"JSON导出失败：{str(e)}")
-            return None
+            return False
 
     def closeEvent(self, event):
         """关闭主窗口时保存窗口位置和大小"""
+        if hasattr(self, '_excel_check_timer'):
+            self._excel_check_timer.stop()  # 停止 Excel 检测定时器
         geom = self.saveGeometry()
         settings = QSettings("config.ini", QSettings.IniFormat)
         settings.setValue("window/geometry", geom)
         super().closeEvent(event)
+
+    def _open_excel_dir(self):
+        """在资源管理器中打开当前 Excel 所在目录"""
+        excel_path = self.excel_path or self.bd_excel_path
+        if not excel_path or not os.path.exists(excel_path):
+            QMessageBox.warning(self, "提示", "Excel 文件路径无效，无法打开目录")
+            return
+        dir_path = os.path.dirname(excel_path)
+        try:
+            os.startfile(dir_path)
+        except Exception as e:
+            QMessageBox.warning(self, "错误", f"打开目录失败: {str(e)}")
+
+    def _exit_and_open_excel_dir(self):
+        """退出并打开 Excel 所在目录（三选一确认）"""
+        reply = QMessageBox(self)
+        reply.setWindowTitle("退出选项")
+        reply.setText("请选择退出方式：")
+        btn_save_open = reply.addButton("💾 保存，退出并打开文件夹", QMessageBox.ActionRole)
+        btn_save_exit = reply.addButton("💾 保存并退出", QMessageBox.ActionRole)
+        btn_no_save = reply.addButton("🚪 退出不保存", QMessageBox.ActionRole)
+        reply.addButton("取消", QMessageBox.RejectRole)
+        reply.exec_()
+        clicked = reply.clickedButton()
+
+        if clicked == btn_save_open:
+            if self.export_json():
+                self._open_excel_dir()   # 先打开目录
+                self.close()             # 再关闭
+        elif clicked == btn_save_exit:
+            if self.export_json():
+                self.close()
+        elif clicked == btn_no_save:
+            confirm = QMessageBox.question(
+                self, "确认退出",
+                "该选项不保存已有内容，确定退出？",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+            )
+            if confirm == QMessageBox.Yes:
+                self.close()
 
     def reload_paths(self):
         """
@@ -1161,6 +1512,13 @@ class EnhancedDataEditor(QMainWindow):
                 (folder_path, excel_path, json_path, sheet_name,
                  bd_folder, bd_excel, bd_sheet, bd_json) = path_selector.selected_paths
 
+                # 保留原始路径（设置界面显示用）
+                folder_path_raw = folder_path
+                bd_folder_raw = bd_folder
+
+                # 显示数据读取加载提示
+                data_splash = self._show_reload_splash()
+
                 # ZIP 解压
                 try:
                     if folder_path:
@@ -1168,24 +1526,36 @@ class EnhancedDataEditor(QMainWindow):
                     if bd_folder:
                         bd_folder = ensure_extracted(bd_folder, logger)
                 except ValueError as e:
+                    data_splash.close()
                     QMessageBox.critical(None, "解压错误", str(e))
                     return
 
                 # 验证路径有效性
                 if not folder_path and not bd_folder:
+                    data_splash.close()
                     QMessageBox.critical(None, "错误", "必须选择 HTML 文件夹或北单文件夹")
                     return
                 if folder_path and not excel_path:
+                    data_splash.close()
                     QMessageBox.critical(None, "错误", "选择了 HTML 文件夹则必须选择 Excel 文件")
                     return
                 if excel_path and not sheet_name:
+                    data_splash.close()
                     QMessageBox.critical(None, "错误", "必须选择有效的 Sheet")
                     return
 
-                # 保存默认 mapping_path（如果尚未设置）
+                # 保存路径到 config.ini（供下次"自动填入"使用）
                 settings = QSettings("config.ini", QSettings.IniFormat)
                 if not settings.value("paths/mapping_path"):
                     settings.setValue("paths/mapping_path", "mapping/mapping_data.txt")
+                settings.setValue("paths/html_folder_path", folder_path_raw or "")
+                settings.setValue("paths/excel_path", excel_path or "")
+                settings.setValue("paths/json_path", json_path or "")
+                settings.setValue("paths/sheet_name", sheet_name or "")
+                settings.setValue("paths/bd_folder_path", bd_folder_raw or "")
+                settings.setValue("paths/bd_excel_path", bd_excel or "")
+                settings.setValue("paths/bd_sheet_name", bd_sheet or "")
+                settings.setValue("paths/bd_json_path", bd_json or "")
 
                 # 创建新的主窗口实例
                 new_window = EnhancedDataEditor(excel_path=excel_path,
@@ -1195,8 +1565,12 @@ class EnhancedDataEditor(QMainWindow):
                                                bd_file_path=bd_folder or "",
                                                bd_excel_path=bd_excel or "",
                                                bd_sheet_name=bd_sheet or "",
-                                               bd_json_path=bd_json or "")
+                                               bd_json_path=bd_json or "",
+                                               html_source_path=folder_path_raw,
+                                               bd_source_path=bd_folder_raw)
                 new_window.show()
+                # 新窗口就绪后关闭加载提示
+                data_splash.close()
 
         except Exception as e:
             logger.exception("重新加载路径时发生错误")
@@ -1207,27 +1581,63 @@ class EnhancedDataEditor(QMainWindow):
         settings = QSettings("config.ini", QSettings.IniFormat)
         current_paths = {
             'mapping_path': settings.value("paths/mapping_path", "mapping/mapping_data.txt"),
-            'html_folder_path': settings.value("paths/html_folder_path", ""),
-            'excel_path': settings.value("paths/excel_path", ""),
-            'json_path': settings.value("paths/json_path", ""),
-            'sheet_name': settings.value("paths/sheet_name", ""),
+            'html_folder_path': self.html_source_path,
+            'excel_path': self.excel_path or "",
+            'json_path': self.json_path or "",
+            'sheet_name': self.sheet_name or "",
+            'bd_folder_path': self.bd_source_path,
+            'bd_excel_path': self.bd_excel_path or "",
+            'bd_sheet_name': self.bd_sheet_name or "",
+            'bd_json_path': self.bd_json_path or "",
         }
 
-        dialog = SettingsDialog(current_paths, parent=self)
+        dialog = SettingsDialog(current_paths, parent=self, txt_dir=self.txt_dir)
         if dialog.exec_() == QDialog.Accepted:
             new_paths = dialog.get_paths()
             # 重载 MATCH_DICT 和键盘映射（可能在设置中已修改）
             reload_match_dict()
             self.table.setItemDelegate(SpaceToZeroDelegate(self.table))
-            self._reload_with_new_paths(new_paths)
+
+            # 仅当路径变化时才重新加载数据（只改 AI/映射配置时不刷新，避免丢失未保存内容）
+            if self._paths_changed(new_paths):
+                self._reload_with_new_paths(new_paths)
+            else:
+                self.logger.info("设置已更新（仅 AI/映射配置），数据保持不变")
+
+    def _paths_changed(self, new_paths: dict) -> bool:
+        """判断路径是否有变化（决定是否重新加载数据）"""
+        cur = {
+            'html_folder_path': self.html_source_path,
+            'excel_path': self.excel_path or "",
+            'json_path': self.json_path or "",
+            'sheet_name': self.sheet_name or "",
+            'bd_folder_path': self.bd_source_path,
+            'bd_excel_path': self.bd_excel_path or "",
+            'bd_sheet_name': self.bd_sheet_name or "",
+            'bd_json_path': self.bd_json_path or "",
+        }
+        for key, cur_val in cur.items():
+            new_val = new_paths.get(key, "") or ""
+            if new_val != cur_val:
+                return True
+        return False
 
     def _reload_with_new_paths(self, new_paths: dict):
         """根据新路径重新初始化数据"""
-        html_folder = new_paths['html_folder_path']
-        excel_path = new_paths['excel_path']
-        json_path = new_paths['json_path']
-        mapping_path = new_paths['mapping_path']
+        html_folder = new_paths.get('html_folder_path', self.html_source_path)
+        excel_path = new_paths.get('excel_path', self.excel_path or "")
+        json_path = new_paths.get('json_path', self.json_path or "")
+        mapping_path = new_paths.get(
+            'mapping_path',
+            QSettings("config.ini", QSettings.IniFormat).value("paths/mapping_path", "mapping/mapping_data.txt")
+        )
         sheet_name = new_paths.get('sheet_name', self.sheet_name)
+
+        # BD 路径
+        bd_folder = new_paths.get('bd_folder_path', self.bd_source_path)
+        bd_excel = new_paths.get('bd_excel_path', self.bd_excel_path or "")
+        bd_sheet = new_paths.get('bd_sheet_name', self.bd_sheet_name or "")
+        bd_json = new_paths.get('bd_json_path', self.bd_json_path or "")
 
         if not html_folder or not excel_path:
             QMessageBox.warning(self, "警告", "HTML文件夹路径和Excel路径不能为空")
@@ -1238,12 +1648,20 @@ class EnhancedDataEditor(QMainWindow):
             return
 
         try:
-            # 如果是 .zip 路径则自动解压
+            # 如果是 .zip 路径则自动解压（JC 和 BD）
+            html_source = html_folder
             html_folder = ensure_extracted(html_folder, logger)
+            bd_source = bd_folder
+            bd_folder = ensure_extracted(bd_folder, logger)
+
             result = reinitialize_data(html_folder, excel_path, sheet_name, mapping_path, logger)
 
+            # 更新 JC 路径
+            self.html_source_path = html_source or ""
             self.get_info = result['get_info']
             self.file_path = html_folder
+            self.excel_path = excel_path or ""
+            self.json_path = json_path or ""
             self.sheet_name = sheet_name
             self.top_data = result['top_data']
             self.left_items = result['left_items']
@@ -1255,6 +1673,16 @@ class EnhancedDataEditor(QMainWindow):
             self.header_bases = result['header_bases']
             self.url = result['url']
             self.data_storage = result['data_storage']
+
+            # 更新 BD 路径
+            self.bd_source_path = bd_source or ""
+            self.bd_file_path = bd_folder or ""
+            self.bd_excel_path = bd_excel or ""
+            self.bd_sheet_name = bd_sheet or ""
+            self.bd_json_path = bd_json or ""
+            self._has_bd_folder = bool(self.bd_file_path)
+            if hasattr(self, 'bd_mode_btn'):
+                self.bd_mode_btn.setEnabled(self._has_bd_folder)
 
             # 重新加载图片模式配置
             self._load_pic_config()
@@ -1269,13 +1697,17 @@ class EnhancedDataEditor(QMainWindow):
             self._rebuild_radio_buttons()
             self.refresh_table()
 
-            # 保存路径到 QSettings
+            # 保存路径到 QSettings（用原始路径，非临时目录）
             settings = QSettings("config.ini", QSettings.IniFormat)
             settings.setValue("paths/mapping_path", mapping_path)
-            settings.setValue("paths/html_folder_path", html_folder)
+            settings.setValue("paths/html_folder_path", html_source)
             settings.setValue("paths/excel_path", excel_path)
             settings.setValue("paths/json_path", json_path)
             settings.setValue("paths/sheet_name", sheet_name)
+            settings.setValue("paths/bd_folder_path", bd_source)
+            settings.setValue("paths/bd_excel_path", bd_excel)
+            settings.setValue("paths/bd_sheet_name", bd_sheet)
+            settings.setValue("paths/bd_json_path", bd_json)
 
             self.logger.info("设置已更新，数据已重新加载")
 

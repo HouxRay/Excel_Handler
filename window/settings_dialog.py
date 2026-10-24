@@ -2,21 +2,23 @@ import os
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QLineEdit, QPushButton, QFileDialog, QMessageBox,
                              QComboBox, QTabWidget, QTableWidget, QTableWidgetItem,
-                             QGroupBox, QWidget, QHeaderView)
+                             QGroupBox, QWidget, QHeaderView, QCheckBox, QTextEdit)
 from PyQt5.QtCore import QSettings
 from openpyxl import load_workbook
 from src.mapping_manager import (get_match_dict, get_default_match_dict, save_match_dict,
                                   get_keyboard_mappings, get_default_keyboard_mappings,
                                   save_keyboard_mappings)
+from src import ai_config
 
 
 class SettingsDialog(QDialog):
     """设置对话框：路径配置 + 映射关系管理"""
 
-    def __init__(self, current_paths: dict, parent=None):
+    def __init__(self, current_paths: dict, parent=None, txt_dir: str = ""):
         super().__init__(parent)
         self.setWindowTitle("设置")
-        self.setGeometry(400, 300, 650, 560)
+        self.setGeometry(400, 300, 650, 680)
+        self.txt_dir = txt_dir
 
         self.initial_paths = dict(current_paths)
         self.current_paths = dict(current_paths)
@@ -29,23 +31,72 @@ class SettingsDialog(QDialog):
         path_tab = QWidget()
         path_layout = QVBoxLayout(path_tab)
 
-        self._build_path_row(path_layout, "映射文件路径:", 'mapping_path',
+        # -- JC 模式 --
+        jc_group = QGroupBox("JC模式")
+        jc_layout = QVBoxLayout(jc_group)
+        self._build_path_row(jc_layout, "映射文件路径:", 'mapping_path',
                              lambda: self._browse_file('mapping_edit'))
-        self._build_path_row(path_layout, "HTML文件夹路径:", 'html_folder_path',
+        self._build_path_row(jc_layout, "HTML文件夹路径:", 'html_folder_path',
                              lambda: self._browse_folder('html_edit'))
-        self._build_path_row(path_layout, "Excel文件路径:", 'excel_path',
-                             self._browse_excel)
+        self._build_path_row(jc_layout, "Excel文件路径:", 'excel_path',
+                             lambda: self._browse_excel('excel_edit', 'sheet_combo'))
 
-        sheet_layout = QHBoxLayout()
-        sheet_layout.addWidget(QLabel("选择Sheet:"))
+        jc_sheet_layout = QHBoxLayout()
+        jc_sheet_layout.addWidget(QLabel("选择Sheet:"))
         self.sheet_combo = QComboBox()
         self.sheet_combo.setEnabled(False)
-        sheet_layout.addWidget(self.sheet_combo)
-        sheet_layout.addStretch()
-        path_layout.addLayout(sheet_layout)
+        jc_sheet_layout.addWidget(self.sheet_combo)
+        jc_sheet_layout.addStretch()
+        jc_layout.addLayout(jc_sheet_layout)
 
-        self._build_path_row(path_layout, "JSON文件路径:", 'json_path',
+        self._build_path_row(jc_layout, "JSON文件路径:", 'json_path',
                              lambda: self._browse_file('json_edit'))
+        path_layout.addWidget(jc_group)
+
+        # -- BD 模式 --
+        bd_group = QGroupBox("北单模式")
+        bd_layout = QVBoxLayout(bd_group)
+        self._build_path_row(bd_layout, "北单文件夹路径:", 'bd_folder_path',
+                             lambda: self._browse_folder('bd_folder_edit'))
+        self._build_path_row(bd_layout, "BD Excel文件路径:", 'bd_excel_path',
+                             lambda: self._browse_excel('bd_excel_edit', 'bd_sheet_combo'))
+
+        bd_sheet_layout = QHBoxLayout()
+        bd_sheet_layout.addWidget(QLabel("选择Sheet:"))
+        self.bd_sheet_combo = QComboBox()
+        self.bd_sheet_combo.setEnabled(False)
+        bd_sheet_layout.addWidget(self.bd_sheet_combo)
+        bd_sheet_layout.addStretch()
+        bd_layout.addLayout(bd_sheet_layout)
+
+        self._build_path_row(bd_layout, "BD JSON文件路径:", 'bd_json_path',
+                             lambda: self._browse_file('bd_json_edit'))
+        path_layout.addWidget(bd_group)
+
+        # -- 图片数据目录 --
+        txt_group = QGroupBox("图片数据")
+        txt_layout = QHBoxLayout(txt_group)
+        txt_layout.addWidget(QLabel("图片数据目录:"))
+        self.txt_dir_edit = QLineEdit(self.txt_dir)
+        self.txt_dir_edit.setReadOnly(True)
+        txt_layout.addWidget(self.txt_dir_edit)
+        open_txt_btn = QPushButton("打开目录")
+        open_txt_btn.clicked.connect(self._open_txt_dir)
+        txt_layout.addWidget(open_txt_btn)
+        path_layout.addWidget(txt_group)
+
+        # -- AI 数据目录 --
+        from src import ai_storage as _ai_storage
+        ai_dir_group = QGroupBox("AI 数据")
+        ai_dir_layout = QHBoxLayout(ai_dir_group)
+        ai_dir_layout.addWidget(QLabel("AI 数据目录:"))
+        self.ai_dir_edit = QLineEdit(_ai_storage.AI_DIR)
+        self.ai_dir_edit.setReadOnly(True)
+        ai_dir_layout.addWidget(self.ai_dir_edit)
+        open_ai_btn = QPushButton("打开目录")
+        open_ai_btn.clicked.connect(self._open_ai_dir)
+        ai_dir_layout.addWidget(open_ai_btn)
+        path_layout.addWidget(ai_dir_group)
 
         path_layout.addStretch()
         tabs.addTab(path_tab, "路径设置")
@@ -110,6 +161,91 @@ class SettingsDialog(QDialog):
         name_layout.addLayout(name_btn_layout)
         tabs.addTab(name_tab, "名称映射")
 
+        # === Tab 4: AI 设置 ===
+        ai_tab = QWidget()
+        ai_layout = QVBoxLayout(ai_tab)
+
+        # API Key
+        ai_key_row = QHBoxLayout()
+        ai_key_row.addWidget(QLabel("API Key:"))
+        self.ai_key_edit = QLineEdit()
+        self.ai_key_edit.setEchoMode(QLineEdit.Password)
+        self.ai_key_edit.setPlaceholderText("输入 API Key（保存后不可见）")
+        ai_key_row.addWidget(self.ai_key_edit)
+        ai_key_row.addWidget(QLabel("显示"))
+        self.ai_show_check = QCheckBox()
+        self.ai_show_check.toggled.connect(self._on_ai_show_toggle)
+        ai_key_row.addWidget(self.ai_show_check)
+        ai_layout.addLayout(ai_key_row)
+
+        # 状态标签
+        self.ai_status_label = QLabel()
+        ai_layout.addWidget(self.ai_status_label)
+
+        # 模型
+        ai_model_row = QHBoxLayout()
+        ai_model_row.addWidget(QLabel("模型:"))
+        self.ai_model_edit = QLineEdit(ai_config.get_model())
+        ai_model_row.addWidget(self.ai_model_edit)
+        ai_layout.addLayout(ai_model_row)
+
+        # 基址
+        ai_base_row = QHBoxLayout()
+        ai_base_row.addWidget(QLabel("API 基址:"))
+        self.ai_base_edit = QLineEdit(ai_config.get_base_url())
+        ai_base_row.addWidget(self.ai_base_edit)
+        ai_layout.addLayout(ai_base_row)
+
+        # 目标比赛日期
+        ai_date_row = QHBoxLayout()
+        ai_date_row.addWidget(QLabel("目标比赛日期:"))
+        self.ai_date_combo = QComboBox()
+        self.ai_date_combo.addItems(ai_config.WEEKDAYS)
+        # 选中当前生效值
+        cur = ai_config.get_target_weekday()
+        idx = ai_config.WEEKDAYS.index(cur) if cur in ai_config.WEEKDAYS else 0
+        self.ai_date_combo.setCurrentIndex(idx)
+        ai_date_row.addWidget(self.ai_date_combo)
+        ai_date_row.addWidget(QLabel("(仅本次启动有效，重启恢复今天)"))
+        ai_layout.addLayout(ai_date_row)
+
+        # 删除按钮
+        ai_del_row = QHBoxLayout()
+        ai_del_btn = QPushButton("🗑️ 删除 API Key")
+        ai_del_btn.clicked.connect(self._on_ai_key_delete)
+        ai_del_row.addWidget(ai_del_btn)
+        ai_del_row.addStretch()
+        ai_layout.addLayout(ai_del_row)
+
+        # HTML/文本提示词（JC）
+        ai_layout.addWidget(QLabel("JC（HTML/文本）提示词："))
+        self.ai_prompt_edit = QTextEdit(ai_config.get_system_prompt())
+        self.ai_prompt_edit.setMaximumHeight(120)
+        ai_layout.addWidget(self.ai_prompt_edit)
+
+        # BD 提示词
+        ai_layout.addWidget(QLabel("BD（北单）提示词："))
+        self.ai_prompt_bd_edit = QTextEdit(ai_config.get_system_prompt_bd())
+        self.ai_prompt_bd_edit.setMaximumHeight(120)
+        ai_layout.addWidget(self.ai_prompt_bd_edit)
+
+        # 图片提示词
+        ai_layout.addWidget(QLabel("图片提示词（OCR 识别后使用）："))
+        self.ai_prompt_pic_edit = QTextEdit(ai_config.get_system_prompt_pic())
+        self.ai_prompt_pic_edit.setMaximumHeight(120)
+        ai_layout.addWidget(self.ai_prompt_pic_edit)
+
+        # 恢复默认提示词
+        prompt_reset_row = QHBoxLayout()
+        prompt_reset_btn = QPushButton("🔄 恢复默认提示词")
+        prompt_reset_btn.clicked.connect(self._on_ai_prompt_reset)
+        prompt_reset_row.addWidget(prompt_reset_btn)
+        prompt_reset_row.addStretch()
+        ai_layout.addLayout(prompt_reset_row)
+
+        ai_layout.addStretch()
+        tabs.addTab(ai_tab, "AI 设置")
+
         main_layout.addWidget(tabs)
 
         # --- 底部按钮 ---
@@ -129,16 +265,27 @@ class SettingsDialog(QDialog):
         self.html_edit.textChanged.connect(self._mark_changed)
         self.excel_edit.textChanged.connect(self._mark_changed)
         self.json_edit.textChanged.connect(self._mark_changed)
+        self.bd_folder_edit.textChanged.connect(self._mark_changed)
+        self.bd_excel_edit.textChanged.connect(self._mark_changed)
+        self.bd_json_edit.textChanged.connect(self._mark_changed)
 
-        # Excel 路径变化时加载 sheet
-        self.excel_edit.editingFinished.connect(self._load_sheets)
+        # Excel 路径变化时加载 sheet（JC + BD）
+        self.excel_edit.editingFinished.connect(
+            lambda: self._load_sheets(self.excel_edit, self.sheet_combo))
+        self.bd_excel_edit.editingFinished.connect(
+            lambda: self._load_sheets(self.bd_excel_edit, self.bd_sheet_combo))
         if current_paths.get('excel_path'):
-            self._load_sheets(init_sheet=current_paths.get('sheet_name', ''))
+            self._load_sheets(self.excel_edit, self.sheet_combo,
+                              init_sheet=current_paths.get('sheet_name', ''))
+        if current_paths.get('bd_excel_path'):
+            self._load_sheets(self.bd_excel_edit, self.bd_sheet_combo,
+                              init_sheet=current_paths.get('bd_sheet_name', ''))
 
         # 填充映射表格
         self._populate_table(self.match_table, get_match_dict())
         self._populate_table(self.keyboard_table, get_keyboard_mappings())
         self._load_name_mapping_table()
+        self._update_ai_status()
 
     # ---- Path tab helpers ----
 
@@ -151,17 +298,17 @@ class SettingsDialog(QDialog):
         row.addWidget(edit)
         row.addWidget(btn)
         parent_layout.addLayout(row)
-        setattr(self, f"{key}_edit" if not hasattr(self, f"{key}_edit") else "_",
-                edit)
         # Store edit widgets for access
-        if key == 'mapping_path':
-            self.mapping_edit = edit
-        elif key == 'html_folder_path':
-            self.html_edit = edit
-        elif key == 'excel_path':
-            self.excel_edit = edit
-        elif key == 'json_path':
-            self.json_edit = edit
+        edit_map = {
+            'mapping_path': 'mapping_edit',
+            'html_folder_path': 'html_edit',
+            'excel_path': 'excel_edit',
+            'json_path': 'json_edit',
+            'bd_folder_path': 'bd_folder_edit',
+            'bd_excel_path': 'bd_excel_edit',
+            'bd_json_path': 'bd_json_edit',
+        }
+        setattr(self, edit_map.get(key, f"{key}_edit"), edit)
 
     # ---- Mapping tab helpers ----
 
@@ -273,6 +420,42 @@ class SettingsDialog(QDialog):
     def _mark_changed(self):
         self._changed = True
 
+    # ---- AI 设置 ----
+    def _on_ai_show_toggle(self, checked: bool):
+        """显示勾选：临时显示明文"""
+        self.ai_key_edit.setEchoMode(QLineEdit.Normal if checked else QLineEdit.Password)
+
+    def _on_ai_key_delete(self):
+        """删除 API Key"""
+        if not ai_config.has_api_key():
+            QMessageBox.information(self, "提示", "尚未配置 API Key")
+            return
+        reply = QMessageBox.question(
+            self, "确认删除", "确定删除 API Key 吗？",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            ai_config.clear_api_key()
+            self.ai_key_edit.clear()
+            self._update_ai_status()
+            self._mark_changed()
+
+    def _update_ai_status(self):
+        """更新 AI 状态标签"""
+        if ai_config.has_api_key():
+            self.ai_status_label.setText("状态：✅ 已配置（保存后不可见明文）")
+            self.ai_status_label.setStyleSheet("color: #2E7D32; font-size: 11px;")
+        else:
+            self.ai_status_label.setText("状态：⚪ 未配置")
+            self.ai_status_label.setStyleSheet("color: #999; font-size: 11px;")
+
+    def _on_ai_prompt_reset(self):
+        """恢复默认提示词"""
+        self.ai_prompt_edit.setPlainText(ai_config.DEFAULT_SYSTEM_PROMPT)
+        self.ai_prompt_bd_edit.setPlainText(ai_config.DEFAULT_SYSTEM_PROMPT_BD)
+        self.ai_prompt_pic_edit.setPlainText(ai_config.DEFAULT_SYSTEM_PROMPT_PIC)
+        self._mark_changed()
+
     @staticmethod
     def _get_last_dir(key: str, default: str = "") -> str:
         settings = QSettings("config.ini", QSettings.IniFormat)
@@ -312,6 +495,27 @@ class SettingsDialog(QDialog):
                 getattr(self, target_edit).setText(folder)
                 self._save_last_dir("html_folder", folder)
 
+    def _open_txt_dir(self):
+        """在系统文件管理器中打开图片数据目录"""
+        if not self.txt_dir or not os.path.exists(self.txt_dir):
+            QMessageBox.warning(self, "提示", "图片数据目录不存在")
+            return
+        try:
+            os.startfile(self.txt_dir)
+        except Exception as e:
+            QMessageBox.warning(self, "错误", f"打开目录失败: {str(e)}")
+
+    def _open_ai_dir(self):
+        """在系统文件管理器中打开 AI 数据目录"""
+        from src import ai_storage
+        if not os.path.exists(ai_storage.AI_DIR):
+            QMessageBox.warning(self, "提示", "AI 数据目录不存在")
+            return
+        try:
+            os.startfile(ai_storage.AI_DIR)
+        except Exception as e:
+            QMessageBox.warning(self, "错误", f"打开目录失败: {str(e)}")
+
     def _browse_file(self, target_edit):
         last_dir = self._get_last_dir("json")
         file, _ = QFileDialog.getOpenFileName(self, "选择文件", directory=last_dir, filter="All Files (*)")
@@ -319,40 +523,40 @@ class SettingsDialog(QDialog):
             getattr(self, target_edit).setText(file)
             self._save_last_dir("json", file)
 
-    def _browse_excel(self):
+    def _browse_excel(self, edit_attr, combo_attr):
         last_dir = self._get_last_dir("excel")
         file, _ = QFileDialog.getOpenFileName(self, "选择Excel文件",
                                               directory=last_dir,
                                               filter="Excel Files (*.xlsx *.xls)")
         if file:
-            self.excel_edit.setText(file)
-            self._load_sheets()
+            getattr(self, edit_attr).setText(file)
+            self._load_sheets(getattr(self, edit_attr), getattr(self, combo_attr))
             self._save_last_dir("excel", file)
 
-    def _load_sheets(self, init_sheet=None):
-        excel_path = self.excel_edit.text()
+    def _load_sheets(self, edit, combo, init_sheet=None):
+        excel_path = edit.text()
         if not excel_path or not os.path.exists(excel_path):
-            self.sheet_combo.clear()
-            self.sheet_combo.setEnabled(False)
+            combo.clear()
+            combo.setEnabled(False)
             return
         try:
             wb = load_workbook(filename=excel_path, read_only=True)
             sheet_names = wb.sheetnames
-            self.sheet_combo.clear()
-            self.sheet_combo.addItems(sheet_names)
-            self.sheet_combo.setEnabled(True)
+            combo.clear()
+            combo.addItems(sheet_names)
+            combo.setEnabled(True)
             if init_sheet and init_sheet in sheet_names:
-                self.sheet_combo.setCurrentText(init_sheet)
+                combo.setCurrentText(init_sheet)
             elif sheet_names:
-                self.sheet_combo.setCurrentIndex(0)
+                combo.setCurrentIndex(0)
         except Exception:
-            self.sheet_combo.clear()
-            self.sheet_combo.setEnabled(False)
+            combo.clear()
+            combo.setEnabled(False)
 
     def _on_apply(self):
         """保存所有设置到 QSettings 并接受对话框"""
         settings = QSettings("config.ini", QSettings.IniFormat)
-        # 路径设置
+        # JC 路径设置
         settings.setValue("paths/mapping_path", self.mapping_edit.text())
         settings.setValue("paths/html_folder_path", self.html_edit.text())
         settings.setValue("paths/excel_path", self.excel_edit.text())
@@ -360,12 +564,39 @@ class SettingsDialog(QDialog):
         sheet = self.sheet_combo.currentText() if self.sheet_combo.isEnabled() else ""
         settings.setValue("paths/sheet_name", sheet)
 
+        # BD 路径设置
+        settings.setValue("paths/bd_folder_path", self.bd_folder_edit.text())
+        settings.setValue("paths/bd_excel_path", self.bd_excel_edit.text())
+        bd_sheet = self.bd_sheet_combo.currentText() if self.bd_sheet_combo.isEnabled() else ""
+        settings.setValue("paths/bd_sheet_name", bd_sheet)
+        settings.setValue("paths/bd_json_path", self.bd_json_edit.text())
+
+        # AI 设置（api_key 为空时保留原值）
+        ai_config.save_ai_config(
+            self.ai_key_edit.text(),
+            self.ai_model_edit.text(),
+            self.ai_base_edit.text(),
+        )
+        # 保存提示词
+        ai_config.save_system_prompts(
+            self.ai_prompt_edit.toPlainText(),
+            self.ai_prompt_pic_edit.toPlainText(),
+            self.ai_prompt_bd_edit.toPlainText(),
+        )
+        # 目标比赛日期（仅内存，本次启动有效）
+        if hasattr(self, 'ai_date_combo'):
+            ai_config.set_target_weekday(self.ai_date_combo.currentText())
+
         self.current_paths = {
             'mapping_path': self.mapping_edit.text(),
             'html_folder_path': self.html_edit.text(),
             'excel_path': self.excel_edit.text(),
             'json_path': self.json_edit.text(),
             'sheet_name': sheet,
+            'bd_folder_path': self.bd_folder_edit.text(),
+            'bd_excel_path': self.bd_excel_edit.text(),
+            'bd_sheet_name': bd_sheet,
+            'bd_json_path': self.bd_json_edit.text(),
         }
 
         # 映射设置

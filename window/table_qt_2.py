@@ -76,6 +76,21 @@ class PathSelector(QDialog):
         jc_group = QGroupBox("JC模式（HTML/图片）")
         jc_layout = QVBoxLayout()
 
+        # JC 自动填入上次路径按钮
+        jc_auto_row = QHBoxLayout()
+        jc_auto_btn = QPushButton("🔄 自动填入上次JC路径")
+        jc_auto_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #E3F2FD; color: #1565C0; font-weight: bold;
+                padding: 4px 8px; border-radius: 4px; border: 1px solid #90CAF9;
+            }
+            QPushButton:hover { background-color: #BBDEFB; }
+        """)
+        jc_auto_btn.clicked.connect(self._auto_fill_jc)
+        jc_auto_row.addWidget(jc_auto_btn)
+        jc_auto_row.addStretch()
+        jc_layout.addLayout(jc_auto_row)
+
         # JC 文件夹
         jc_folder_layout = QHBoxLayout()
         self.jc_folder_label = QLabel('HTML文件夹路径:')
@@ -131,6 +146,21 @@ class PathSelector(QDialog):
         # =============================================
         bd_group = QGroupBox("北单模式")
         bd_layout = QVBoxLayout()
+
+        # BD 自动填入上次路径按钮
+        bd_auto_row = QHBoxLayout()
+        bd_auto_btn = QPushButton("🔄 自动填入上次BD路径")
+        bd_auto_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #FFF3E0; color: #E65100; font-weight: bold;
+                padding: 4px 8px; border-radius: 4px; border: 1px solid #FFCC80;
+            }
+            QPushButton:hover { background-color: #FFE0B2; }
+        """)
+        bd_auto_btn.clicked.connect(self._auto_fill_bd)
+        bd_auto_row.addWidget(bd_auto_btn)
+        bd_auto_row.addStretch()
+        bd_layout.addLayout(bd_auto_row)
 
         # BD 文件夹
         bd_folder_layout = QHBoxLayout()
@@ -339,6 +369,51 @@ class PathSelector(QDialog):
             logger.error(f"加载BD Excel文件失败: {e}")
             QMessageBox.warning(self, "错误", f"无法读取BD Excel文件: {str(e)}")
             self.bd_sheet_combo.setEnabled(False)
+
+    # ---------- 自动填入上次路径 ----------
+    def _auto_fill_jc(self):
+        """从 config.ini 自动填入上次的 JC 路径"""
+        settings = QSettings("config.ini", QSettings.IniFormat)
+        folder = settings.value("paths/html_folder_path", "")
+        excel = settings.value("paths/excel_path", "")
+        json = settings.value("paths/json_path", "")
+        sheet = settings.value("paths/sheet_name", "")
+
+        if not folder and not excel:
+            QMessageBox.information(self, "提示", "无上次 JC 路径记录")
+            return
+
+        if folder:
+            self.jc_folder_line.setText(folder)
+        if excel and os.path.exists(excel):
+            self.jc_excel_line.setText(excel)
+            self.load_jc_sheet_names(excel)
+            if sheet and sheet in self.jc_sheet_names:
+                self.jc_sheet_combo.setCurrentText(sheet)
+        if json and os.path.exists(json):
+            self.jc_json_line.setText(json)
+
+    def _auto_fill_bd(self):
+        """从 config.ini 自动填入上次的 BD 路径"""
+        settings = QSettings("config.ini", QSettings.IniFormat)
+        folder = settings.value("paths/bd_folder_path", "")
+        excel = settings.value("paths/bd_excel_path", "")
+        sheet = settings.value("paths/bd_sheet_name", "")
+        json = settings.value("paths/bd_json_path", "")
+
+        if not folder and not excel:
+            QMessageBox.information(self, "提示", "无上次 BD 路径记录")
+            return
+
+        if folder:
+            self.bd_folder_line.setText(folder)
+        if excel and os.path.exists(excel):
+            self.bd_excel_line.setText(excel)
+            self.load_bd_sheet_names(excel)
+            if sheet and sheet in self.bd_sheet_names:
+                self.bd_sheet_combo.setCurrentText(sheet)
+        if json and os.path.exists(json):
+            self.bd_json_line.setText(json)
 
     # ---------- 通用 ----------
     def on_confirm(self):
