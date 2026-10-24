@@ -5,7 +5,7 @@
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![PyQt5](https://img.shields.io/badge/GUI-PyQt5-41CD52?logo=qt&logoColor=white)
 ![Version](https://img.shields.io/badge/version-4.0.1-blue)
-![License](https://img.shields.io/badge/license-Proprietary-lightgrey)
+![License](https://img.shields.io/badge/license-MIT-green)
 
 ---
 
@@ -171,10 +171,14 @@ ExcelHandler/
 
 ## 许可
 
-本项目采用**专有许可（Proprietary, All Rights Reserved）**。
-Copyright (c) 2026 HouxRay，保留所有权利。
+本项目采用 [MIT 许可](LICENSE)。
 
-未经作者书面许可，不得复制、分发、修改或用于商业用途。详见 [LICENSE](LICENSE)。
+```text
+MIT License · Copyright (c) 2026 HouxRay
+```
+
+你可以自由使用、修改、分发与商用，只需在副本或实质性部分中保留版权声明与许可声明。
+软件按"现状"提供，不附带任何担保。
 
 ## 免责声明
 
