@@ -1,0 +1,51 @@
+# 构建镜像时排除的文件（显著减小镜像体积、加快构建）
+# 注意：这里排除的是"构建上下文"，不是 .gitignore
+
+# 版本控制与开发工具
+.git
+.gitignore
+.gitattributes
+.vscode/
+.idea/
+.claude/
+Skill/
+update/
+update_requires/
+Requires/
+
+# 构建产物
+build/
+dist/
+*.spec.bak
+__pycache__/
+*.pyc
+*.pyo
+
+# 测试与夹具（服务镜像不需要）
+tests/
+test_excel/
+
+# 运行时数据（必须由挂载提供，不能烤进镜像）
+json/
+logs/
+pic/
+txt/
+config.ini
+service.ini
+*.log
+
+# 文档与杂项
+docs/
+*.md
+*.zip
+*.backup
+*.gif
+
+# 凭据（绝不进镜像）
+key
+key.*
+*.key
+*.pem
+.env
+.env.*
+requirements-lock.txt

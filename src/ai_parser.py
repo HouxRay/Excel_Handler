@@ -166,3 +166,102 @@ def parse_ai_result(response_text: str, mode: str = 'jc') -> dict:
         "raw": text,
         "method": "line",
     }
+
+
+# ---------------------------------------------------------------------------
+# 胜负平规范化（业务规则来自 2026-10-13 验收反馈）
+#
+# 图片里的「胜负平」列可能写成 `让胜（+1）`、`平让平（-1）`、`主负+平`，
+# 而表格槽位只接受受限词表内的取值，且**不允许出现数字**。
+# ---------------------------------------------------------------------------
+
+#: 允许写入的胜负平取值（业务方给定的封闭词表，不允许其他）
+WDL_ALLOWED = ("胜", "负", "平", "让平", "双平", "让胜", "让负")
+
+#: 图面写法 → 词表内取值
+_WDL_ALIASES = {
+    "主胜": "胜", "客胜": "负",
+    "主负": "负", "客负": "胜",
+    "胜": "胜", "负": "负", "平": "平",
+    "让胜": "让胜", "让负": "让负", "让平": "让平", "双平": "双平",
+}
+
+#: 一个格子里写了多个取值时的分隔符
+_WDL_SEPARATORS = re.compile(r"[\s+,，、/|]+")
+
+
+def _strip_wdl_noise(text: str) -> str:
+    """去掉让球数与括号：``让胜（+1）`` → ``让胜``"""
+    text = re.sub(r"[（(][^）)]*[）)]", "", text)   # 括号及其内容
+    text = re.sub(r"[0-9]", "", text)                # 任何数字
+    return text.strip()
+
+
+def _tokenize_concat_wdl(text: str):
+    """把紧连的写法拆成词表内的取值：``平让平`` → ``['平', '让平']``
+
+    **只在含「让」或「双」时才尝试**：图面「半全场」列的取值都是
+    ``平胜``/``胜胜``/``负负`` 这类纯 ``胜平负`` 组合，若不加限制，
+    ``平胜`` 会被误拆成合法的 ``['平','胜']``，等于把半全场数据当胜负平写进去。
+    宁可丢弃（由调用方记录告警）也不写错数据。
+
+    Returns: 取值列表；无法完整识别时返回 None
+    """
+    if "让" not in text and "双" not in text:
+        return None
+    out = []
+    i = 0
+    while i < len(text):
+        two = text[i:i + 2]
+        if two in WDL_ALLOWED:
+            out.append(two)
+            i += 2
+            continue
+        one = text[i]
+        if one in WDL_ALLOWED:
+            out.append(one)
+            i += 1
+            continue
+        return None                     # 出现无法识别的字符 → 整体放弃
+    return out or None
+
+
+def normalize_wdl(values) -> tuple:
+    """把 AI 返回的胜负平规范化为受限词表内的取值。
+
+    Returns: ``(accepted, dropped)``
+        - ``accepted``：词表内的取值（保持原顺序、去重）
+        - ``dropped``：无法识别而被丢弃的原始写法（供日志排查）
+    """
+    accepted, dropped = [], []
+    # 模型偶尔对单值返回字符串而非列表（如 "让胜"）；若不包一层，
+    # 下面的 for 会按字符迭代，把 "让胜" 拆成 "让"+"胜"
+    if isinstance(values, str):
+        values = [values]
+    for raw in (values or []):
+        text = _strip_wdl_noise(str(raw))
+        if not text:
+            continue
+
+        parts = [p for p in _WDL_SEPARATORS.split(text) if p] or [text]
+        tokens, ok = [], True
+        for part in parts:
+            token = _WDL_ALIASES.get(part)
+            if token:
+                tokens.append(token)
+                continue
+            sub = _tokenize_concat_wdl(part)
+            if sub:
+                tokens.extend(sub)
+                continue
+            ok = False
+            break
+
+        if ok and tokens:
+            for token in tokens:
+                if token not in accepted:
+                    accepted.append(token)
+        else:
+            dropped.append(str(raw))
+
+    return accepted, dropped

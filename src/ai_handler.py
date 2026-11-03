@@ -7,12 +7,17 @@ from src import ai_parser
 
 def extract_predictions_from_html(html_file_path: str, excel_path: str = None,
                                   sheet_name: str = None, mode: str = 'jc',
-                                  target_bd_code: str = "") -> dict:
+                                  target_bd_code: str = "",
+                                  whitelist: dict = None) -> dict:
     """HTML 文件 → AI 结构化预测结果。
 
     excel_path/sheet_name: 提供则加载白名单约束 AI 输出编号
     mode: 'jc' 或 'bd'，决定白名单类型和提示词
     target_bd_code: BD 模式当前文件的目标 BD 号，只保留该号的预测
+    whitelist: 已预加载的白名单 {编号: (队A, 队B)}。批量场景由调用方加载一次后
+        逐文件复用，避免每个文件都重新读一遍 Excel；传 None 时按 mode 从
+        excel_path 自动加载（单文件流程即走此分支，行为不变）。传入 {} 表示
+        显式使用空白名单（此时反幻觉过滤会丢弃全部结果）。
     Returns: {"predictions": [...], "raw": "...", "method": "json"|"line"}
     """
     if not html_file_path or not os.path.exists(html_file_path):
@@ -27,13 +32,17 @@ def extract_predictions_from_html(html_file_path: str, excel_path: str = None,
 
     markdown_text = ai_client.html_to_markdown(html_content)
 
-    # 若提供 Excel，加载白名单 + 目标日期，用白名单提示词
-    if excel_path:
+    # 白名单：优先复用调用方预加载的（批量场景），否则按 mode 从 Excel 加载
+    if whitelist is None and excel_path:
         from src import ai_alignment
         if mode == 'bd':
             whitelist = ai_alignment.load_bd_whitelist(excel_path, sheet_name)
         else:
             whitelist = ai_alignment.load_excel_whitelist(excel_path, sheet_name)
+
+    # 有白名单 → 白名单约束提示词 + 后端反幻觉过滤
+    if whitelist is not None:
+        from src import ai_alignment
         target_date = ai_alignment.detect_target_date(markdown_text)
         messages = ai_client.build_messages_with_whitelist(
             markdown_text, whitelist, target_date, mode, target_bd_code)

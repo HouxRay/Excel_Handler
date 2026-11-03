@@ -196,6 +196,19 @@ class SettingsDialog(QDialog):
         ai_base_row.addWidget(self.ai_base_edit)
         ai_layout.addLayout(ai_base_row)
 
+        # 图片识别方式（原生视觉 / 本地 OCR）
+        ai_pipeline_row = QHBoxLayout()
+        ai_pipeline_row.addWidget(QLabel("图片识别方式:"))
+        self.ai_pipeline_combo = QComboBox()
+        self.ai_pipeline_combo.addItem("原生视觉（直接让 AI 看图，快）", "vision")
+        self.ai_pipeline_combo.addItem("本地 OCR（需装 OCR 引擎，可离线）", "ocr")
+        idx = self.ai_pipeline_combo.findData(ai_config.get_image_pipeline())
+        if idx >= 0:
+            self.ai_pipeline_combo.setCurrentIndex(idx)
+        ai_pipeline_row.addWidget(self.ai_pipeline_combo)
+        ai_pipeline_row.addWidget(QLabel("（作用于粘贴图片 / 拖拽图片 / 选择图片文件）"))
+        ai_layout.addLayout(ai_pipeline_row)
+
         # 目标比赛日期
         ai_date_row = QHBoxLayout()
         ai_date_row.addWidget(QLabel("目标比赛日期:"))
@@ -577,6 +590,9 @@ class SettingsDialog(QDialog):
             self.ai_model_edit.text(),
             self.ai_base_edit.text(),
         )
+        # 图片识别方式（原生视觉 / 本地 OCR）
+        if hasattr(self, 'ai_pipeline_combo'):
+            ai_config.save_image_pipeline(self.ai_pipeline_combo.currentData())
         # 保存提示词
         ai_config.save_system_prompts(
             self.ai_prompt_edit.toPlainText(),

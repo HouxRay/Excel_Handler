@@ -4,7 +4,26 @@ import os
 import re
 
 
-def load_pic_config(data_storage, flag, top_data):
+def _resolve_mapping_pic_path():
+    """定位 mapping_pic.txt
+
+    优先当前工作目录（保持原行为），其次**程序所在目录**
+    —— 服务在容器里/由快捷方式启动时，CWD 可能与程序目录不同，
+    只用相对路径会导致"图片类别静默消失"。
+    """
+    candidates = [os.path.join("mapping", "mapping_pic.txt")]
+    try:
+        from src.app_paths import app_root
+        candidates.append(os.path.join(app_root(), "mapping", "mapping_pic.txt"))
+    except Exception:
+        pass
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def load_pic_config(data_storage, flag, top_data, logger=None):
     """
     加载图片模式配置（mapping/mapping_pic.txt）
     Returns: (pic_categories, pic_mapping, data_storage)
@@ -12,23 +31,27 @@ def load_pic_config(data_storage, flag, top_data):
     pic_categories = []
     pic_mapping = {}
     try:
-        pic_file = "mapping/mapping_pic.txt"
-        if os.path.exists(pic_file):
-            with open(pic_file, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if line and "：" in line:
-                        value, key = line.split("：", 1)
-                        pic_mapping[key.strip()] = value.strip()
-                        pic_categories.append(key.strip())
-            for pic_cat in pic_categories:
-                if pic_cat not in data_storage:
-                    if flag:
-                        data_storage[pic_cat] = {row[0]: list(row[2:]) for row in top_data}
-                    else:
-                        data_storage[pic_cat] = {}
+        pic_file = _resolve_mapping_pic_path()
+        if pic_file is None:
+            if logger is not None:
+                logger.warning("未找到 mapping/mapping_pic.txt —— 图片类别将不会加载")
+            return pic_categories, pic_mapping, data_storage
+        with open(pic_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and "：" in line:
+                    value, key = line.split("：", 1)
+                    pic_mapping[key.strip()] = value.strip()
+                    pic_categories.append(key.strip())
+        for pic_cat in pic_categories:
+            if pic_cat not in data_storage:
+                if flag:
+                    data_storage[pic_cat] = {row[0]: list(row[2:]) for row in top_data}
+                else:
+                    data_storage[pic_cat] = {}
     except Exception:
-        pass
+        if logger is not None:
+            logger.exception("加载图片模式配置失败")
     return pic_categories, pic_mapping, data_storage
 
 

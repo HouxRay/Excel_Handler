@@ -65,6 +65,23 @@ def _decode_filename(raw_name: bytes, flag_bits: int) -> str:
     return raw_name.decode('utf-8', errors='replace')
 
 
+def _raw_entry_name(info) -> bytes:
+    """取压缩条目的"原始字节名"，用于还原被误解码的中文名。
+
+    Python 3 的 ``ZipInfo.filename`` 已经按 CP437（无 UTF-8 标志时）或 UTF-8 解码过。
+    想再按 GBK 重新解释，需要把它转回原始字节；但**当名字本来就不是 CP437 能表示的**
+    （例如压缩包带 UTF-8 标志、或已含中文）时，``encode('cp437')`` 会抛
+    ``UnicodeEncodeError`` —— 以前这里没兜住，导致任何含中文条目的压缩包都解压失败。
+
+    这种情况说明名字已经是正确解码的，直接拿它自己的 UTF-8 字节即可（无需再还原）。
+    """
+    name = getattr(info, "filename", "") or ""
+    try:
+        return name.encode("cp437")
+    except UnicodeEncodeError:
+        return name.encode("utf-8")
+
+
 def _extract_with_encoding(zf: zipfile.ZipFile, extract_dir: str, logger=None):
     """解压 ZIP 文件，正确处理中文文件名编码。
 
@@ -73,7 +90,7 @@ def _extract_with_encoding(zf: zipfile.ZipFile, extract_dir: str, logger=None):
     """
     for info in zf.infolist():
         # 解码原始文件名
-        raw_name = info.orig_filename.encode('cp437') if hasattr(info, 'orig_filename') else info.filename.encode('cp437')
+        raw_name = _raw_entry_name(info)
         decoded = _decode_filename(raw_name, info.flag_bits)
 
         # 跳过 __MACOSX 等隐藏目录

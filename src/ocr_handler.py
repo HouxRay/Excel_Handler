@@ -13,6 +13,7 @@ from src import ai_client, ai_parser, ai_config
 SUPPORTED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp'}
 OCR_CONFIDENCE_THRESH = 0.3          # 置信度阈值，低于此值忽略
 LINE_GROUP_THRESHOLD = 15            # Y坐标行分组阈值（像素）
+MAX_IMAGE_SIDE = 1568                # 视觉路径送图前的最大边长（超出等比缩小）
 
 # --- OCR 引擎检测与缓存 ---
 _OCR_ENGINE = None
@@ -163,8 +164,8 @@ def build_pic_messages(markdown_text: str) -> list[dict]:
     ]
 
 
-def extract_predictions_from_image(image_path: str) -> dict:
-    """图片 → OCR → AI → 结构化结果"""
+def _extract_via_ocr(image_path: str) -> dict:
+    """本地 OCR → 文本 → AI → 结构化结果（改造前的原有行为，逐行未改）"""
     raw_text = image_to_text(image_path)
     if not raw_text:
         return {
@@ -177,3 +178,82 @@ def extract_predictions_from_image(image_path: str) -> dict:
     messages = build_pic_messages(md_text)
     response_text = ai_client.call_deepseek(messages)
     return ai_parser.parse_ai_result(response_text)
+
+
+def _image_to_data_url(image_path: str) -> str:
+    """读取图片并编码为 data URL，供原生视觉路径使用。
+
+    超过 ``MAX_IMAGE_SIDE`` 的大图先等比缩小：真实截图可能宽达数千像素，
+    不缩放会让 base64 膨胀到十几 MB 并显著抬高 token 消耗。
+    缩放用 PyQt 的 QImage，**不引入新依赖**。
+    """
+    from PyQt5.QtCore import QBuffer, QByteArray, Qt
+    from PyQt5.QtGui import QImage
+
+    image = QImage(image_path)
+    if image.isNull():
+        raise ValueError(f"无法读取图片: {image_path}")
+
+    if max(image.width(), image.height()) > MAX_IMAGE_SIDE:
+        image = image.scaled(MAX_IMAGE_SIDE, MAX_IMAGE_SIDE,
+                             Qt.KeepAspectRatio, Qt.SmoothTransformation)
+
+    raw = QByteArray()
+    buffer = QBuffer(raw)
+    buffer.open(QBuffer.WriteOnly)
+    image.save(buffer, "PNG")
+    buffer.close()
+    return "data:image/png;base64," + bytes(raw.toBase64()).decode("ascii")
+
+
+def build_pic_vision_messages(image_path: str) -> list:
+    """构建多模态消息：**同一套图片 system prompt** + 图片本体。
+
+    注意：``ai_client.call_deepseek`` 中已禁用思考模式（thinking disabled），
+    这正是视觉路径必需的设置（否则思考会吃满 max_tokens 导致 content 为空），
+    因此视觉路径可以直接复用该函数、无需任何改动。
+    """
+    today = _beijing_weekday()
+    user_text = (
+        f"今天是{today}，请分析这张图片中的足球比赛预测，"
+        f"提取所有{today}的比赛结果。"
+    )
+    return [
+        {"role": "system", "content": ai_config.get_system_prompt_pic()},
+        {"role": "user", "content": [
+            {"type": "text", "text": user_text},
+            {"type": "image_url", "image_url": {"url": _image_to_data_url(image_path)}},
+        ]},
+    ]
+
+
+def _extract_via_vision(image_path: str) -> dict:
+    """原生视觉：图片直发 AI，跳过本地 OCR"""
+    # 与 OCR 路径保持一致的入参校验，保证错误行为完全相同
+    if not os.path.isfile(image_path):
+        raise FileNotFoundError(f"图片文件不存在: {image_path}")
+    ext = os.path.splitext(image_path)[1].lower()
+    if ext not in SUPPORTED_EXTENSIONS:
+        raise ValueError(
+            f"不支持的图片格式: {ext}，支持: {', '.join(sorted(SUPPORTED_EXTENSIONS))}")
+
+    messages = build_pic_vision_messages(image_path)
+    response_text = ai_client.call_deepseek(messages)
+    result = ai_parser.parse_ai_result(response_text)
+    if not result.get("predictions"):
+        result.setdefault("warning", "AI 未从图片中提取到预测")
+    return result
+
+
+def extract_predictions_from_image(image_path: str) -> dict:
+    """图片 → 结构化预测结果（按配置分发）
+
+    识别路径由 ``ai_config.get_image_pipeline()`` 决定，默认 ``'vision'``：
+    - ``vision``：图片经 base64 直接送 AI 原生视觉理解
+    - ``ocr``   ：本地 RapidOCR 识别为文本后再送 AI（原有行为）
+
+    两条路径**共用同一套 system prompt 与同一个解析器**，只有"图片如何进入模型"不同。
+    """
+    if ai_config.get_image_pipeline() == "ocr":
+        return _extract_via_ocr(image_path)
+    return _extract_via_vision(image_path)

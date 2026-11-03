@@ -10,6 +10,12 @@ DEFAULT_MODEL = "deepseek-v4-flash"
 DEFAULT_BASE = "https://api.deepseek.com"
 _ENC_PREFIX = "enc:"  # 加密值前缀，用于区分明文/密文
 
+# 图片识别路径（配置键 ai/image_pipeline）
+#   vision —— 图片经 base64 直接送 AI 原生视觉理解（默认；实测比 OCR 快约 4.6 倍）
+#   ocr    —— 本地 RapidOCR 识别为文本后再送 AI（原有行为，可离线兜底）
+IMAGE_PIPELINES = ("vision", "ocr")
+DEFAULT_IMAGE_PIPELINE = "vision"
+
 # 默认提示词（HTML/文本）
 DEFAULT_SYSTEM_PROMPT = """# Role
 数据誊写员，你需要将给定的比赛预测文本分析并提取为结构化结果。
@@ -42,8 +48,9 @@ DEFAULT_SYSTEM_PROMPT = """# Role
 2. 是否识别了所有有比分参考的场次
 3. 编号是否对齐"""
 
-# 默认提示词（图片 OCR）
-DEFAULT_SYSTEM_PROMPT_PIC = """# Role
+# 默认提示词（图片）
+# 旧版默认值：仅用于自动迁移（见 get_system_prompt_pic），**勿删**
+LEGACY_SYSTEM_PROMPT_PIC = """# Role
 数据誊写员，你需要将图片中的比赛预测文本识别并提取为结构化结果。
 
 # Task
@@ -72,6 +79,51 @@ DEFAULT_SYSTEM_PROMPT_PIC = """# Role
 2. 编号是否正确对齐（忽略队名差异）
 3. 是否过滤了非目标日期的比赛
 4. 比分是否都是2位数字"""
+
+DEFAULT_SYSTEM_PROMPT_PIC = """# Role
+数据誊写员，你需要将图片中的比赛预测表格识别并提取为结构化结果。
+
+# Task
+分析图片中的表格，逐行提取【明确给出预测】的足球比赛，按编号组织输出。
+
+# Constraints
+1. 编号识别：
+  - 竞彩(JC)：编号为3位数（如 001、002），表头常带星期前缀（周日001）
+  - 北单(BD)：编号为北单号（北单1、北单4）
+  - 【编号是比赛的唯一身份】队伍名可能有翻译差异，一律以编号为准
+2. 胜负平（关键，极易取错列）：
+  - 只取「胜负平」列（**队伍列右边的那一列**），其值形如：主胜 / 主负 / 平 /
+    让胜（+1）/ 让平（-1）/ 平让平（-1）/ 主负+平
+  - 【绝对不要取「半全场」列】半全场的值是两个字直接相连：平胜、负平、胜胜、
+    平平、负负、胜平… 这些值一律不要放进 wdl
+  - 对照反例：若某行「胜负平」列是「主负+平」、其右边的「半全场」列是「负负，负平」，
+    正确的 wdl 是 ["负","平"]（来自胜负平列）；写成 ["负负","负平"] 就是把半全场
+    当成了胜负平，属于错误
+  - wdl 只允许这 7 个取值：胜、负、平、让平、双平、让胜、让负。**不允许出现数字**
+    · 「主胜」写成「胜」，「主负」写成「负」
+    · 让球数（+1）（-1）一律去掉
+  - 一格里有多个取值时要拆开，最多 2 个：
+    · 「平让平」→ ["平", "让平"]
+    · 「让平让负」→ ["让平", "让负"]
+    · 「主负+平」→ ["负", "平"]
+  - 确实取不到合法胜负平时，wdl 用空数组 []，不要猜
+3. 比分：
+  - 取「比分」列，只保留2位数字，至少1个，至多2个；非数字比分略过
+4. 目标日期：
+  - 从图中识别目标比赛日期，不假设是今天；只提取目标日期对应的比赛
+5. 输出格式：
+  - 编号用3位或北单号原样
+  - 输出 JSON：{"predictions": [{"code": "001", "scores": ["10","11"], "wdl": ["让胜"]}]}
+  - 除 JSON 外不要输出任何多余内容
+
+# Execution Protocol
+在输出前，请自查：
+1. wdl 里的值是否【只有那 7 个】、且【不含任何数字】
+2. 是否误把「半全场」列（平胜、负平、胜胜…）当成了胜负平 —— 若是，改回「胜负平」列
+3. 一格里写了两个取值时是否已拆成最多 2 个
+4. 只输出了【明确给出预测】的比赛，没有补全或脑补
+5. 比分是否都是2位数字
+6. 是否过滤了非目标日期的比赛"""
 
 # 默认提示词（北单 BD HTML）
 DEFAULT_SYSTEM_PROMPT_BD = """# Role
@@ -133,8 +185,27 @@ def _xor_decrypt(cipher: str) -> str:
         return ""
 
 
+def _env_api_key() -> str:
+    """从环境变量读取 API Key（**容器 / 无界面部署的正路**）
+
+    为什么必须有这条路径：``_xor_encrypt`` 用 ``MAC + COMPUTERNAME`` 做混淆密钥，
+    **绑定本机**。桌面版在 Windows 上保存的 Key，拷到 Linux 容器里**解不开**
+    （容器内 ``COMPUTERNAME`` 为空、MAC 也不同），只能靠环境变量传明文。
+
+    支持的变量名（按优先级）：``APP_AI_KEY`` / ``DEEPSEEK_KEY`` / ``OPENAI_API_KEY``
+    """
+    for name in ("APP_AI_KEY", "DEEPSEEK_KEY", "OPENAI_API_KEY"):
+        value = (os.environ.get(name) or "").strip()
+        if value:
+            return value
+    return ""
+
+
 def get_api_key() -> str:
-    """读取 AI API Key。兼容旧明文（无 enc: 前缀按明文返回）"""
+    """读取 AI API Key。优先级：环境变量 > 加密存储 > 旧明文"""
+    env_key = _env_api_key()
+    if env_key:
+        return env_key
     settings = QSettings("config.ini", QSettings.IniFormat)
     raw = settings.value("ai/api_key", "") or ""
     if not raw:
@@ -184,16 +255,49 @@ def save_ai_config(api_key: str, model: str = DEFAULT_MODEL, base_url: str = DEF
     settings.setValue("ai/base_url", base_url)
 
 
+def get_image_pipeline() -> str:
+    """读取图片识别路径：'vision'（原生视觉，默认）或 'ocr'（本地 OCR）
+
+    非法值/未配置一律回退到默认值，避免配置写坏导致图片链路不可用。
+    """
+    settings = QSettings("config.ini", QSettings.IniFormat)
+    value = (settings.value("ai/image_pipeline", DEFAULT_IMAGE_PIPELINE) or "").strip().lower()
+    return value if value in IMAGE_PIPELINES else DEFAULT_IMAGE_PIPELINE
+
+
+def save_image_pipeline(mode: str):
+    """保存图片识别路径；非 IMAGE_PIPELINES 内的值忽略（保留原配置）"""
+    if mode in IMAGE_PIPELINES:
+        QSettings("config.ini", QSettings.IniFormat).setValue("ai/image_pipeline", mode)
+
+
 def get_system_prompt() -> str:
     """读取 HTML/文本提示词（无则返回默认）"""
     settings = QSettings("config.ini", QSettings.IniFormat)
     return settings.value("ai/system_prompt", DEFAULT_SYSTEM_PROMPT) or DEFAULT_SYSTEM_PROMPT
 
 
+def _collapse_ws(text: str) -> str:
+    """把所有空白折叠成单个空格，用于"是否仍是默认提示词"的宽松比较。
+
+    QSettings(IniFormat) 读回多行文本时可能把换行变成空格，直接字符串相等会失效。
+    """
+    return " ".join((text or "").split())
+
+
 def get_system_prompt_pic() -> str:
-    """读取图片 OCR 提示词（无则返回默认）"""
+    """读取图片提示词。
+
+    **自动迁移**：若 config.ini 里存的仍是旧版默认提示词（说明用户从未改过它），
+    直接返回新默认 —— 否则升级后新增的「胜负平」规则不会生效，用户会莫名其妙
+    拿到半全场数据。比较时忽略空白差异（QSettings 往返可能改变空白）；
+    用户真正改动过内容的提示词一律不动。
+    """
     settings = QSettings("config.ini", QSettings.IniFormat)
-    return settings.value("ai/system_prompt_pic", DEFAULT_SYSTEM_PROMPT_PIC) or DEFAULT_SYSTEM_PROMPT_PIC
+    stored = settings.value("ai/system_prompt_pic", "") or ""
+    if not stored or _collapse_ws(stored) == _collapse_ws(LEGACY_SYSTEM_PROMPT_PIC):
+        return DEFAULT_SYSTEM_PROMPT_PIC
+    return stored
 
 
 def get_system_prompt_bd() -> str:

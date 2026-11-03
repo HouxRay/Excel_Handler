@@ -20,11 +20,14 @@ from src.data_loader import load_pic_config, load_json_to_storage, load_bd_json,
 from src.exporter import collect_export_write_ops, collect_sort_stats
 from src.log_setup import logger, setup_logger, QTextEditLogger
 from src.zip_handler import ensure_extracted
-from src import ai_handler, ai_config, ai_storage, ai_alignment
+from src import (ai_handler, ai_config, ai_storage, ai_alignment, ai_parser,
+                 image_source, app_paths)
+from src.service.batch_runner import BatchRunnerMixin
 from window.html_viewer import NewWindow
 from window.settings_dialog import SettingsDialog
 from window.ai_preview_dialog import AiPreviewDialog
 from window.ai_history_dialog import AiHistoryDialog
+from window.batch_progress_dialog import BatchProgressDialog
 
 
 
@@ -64,7 +67,7 @@ class SpaceToZeroDelegate(QStyledItemDelegate):
         model.setData(index, text)
 
 
-class EnhancedDataEditor(QMainWindow):
+class EnhancedDataEditor(BatchRunnerMixin, QMainWindow):
     def __init__(self, top_data:list = None,
                  left_items:list = None,
                  excel_name:list = None,
@@ -134,9 +137,9 @@ class EnhancedDataEditor(QMainWindow):
         self.html_source_path = html_source_path or file_path or ""  # 原始路径（可能zip）
         self.bd_source_path = bd_source_path or bd_file_path or ""  # 原始BD路径
         # 图片模式 txt 保存目录（软件根目录/txt，按日期分目录）
-        self.txt_dir = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'txt'
-        )
+        # 必须经 src/app_paths 判定"软件目录"：打包后 __file__ 指向 _MEIPASS
+        # 临时解包目录，若据此定位，用户手工录入的 txt 会随退出一起被删除
+        self.txt_dir = app_paths.runtime_subdir('txt')
         self.mapping = {}  # 先初始化空字典，HTML模式下才实际填充
 
         # 从 QSettings 加载持久化的 MATCH_DICT（有则用，无则默认）
@@ -194,6 +197,17 @@ class EnhancedDataEditor(QMainWindow):
         self.current_window = None
         self.is_dirty = False          # 未保存修改标记
         self.worker_thread = None      # 后台工作线程引用
+
+        # AI 一键批量运行状态（需求：Update_require_2026-10-13_1.md）
+        self.batch_thread = None       # 批量 AI 提取线程
+        self.batch_worker = None       # BatchAIWorker 引用
+        self.batch_dialog = None       # 非模态进度窗
+        self._batch_jobs = []          # 本次批量的任务快照 [(名称, 路径), ...]
+        self._batch_results = {}       # {名称: AI 结果}，供 [查看] 只读预览
+        self._batch_failures = []      # 本次批量的失败清单 [(名称, 原因), ...]
+        self._batch_pre_failed = []    # 无源文件、未进入线程的条目
+        self._batch_skipped = 0        # 因"禁止覆盖"而跳过的条数
+        self._batch_whitelist = {}     # 本次批量复用的 Excel 白名单
 
         # 确定各模式可用性（哪个文件夹为空，对应模式不可选）
         self._has_html_folder = bool(self.file_path)
@@ -393,10 +407,17 @@ class EnhancedDataEditor(QMainWindow):
         self.ai_fill_btn.setStyleSheet(orange_style)
         self.ai_fill_btn.clicked.connect(self._on_ai_fill)
 
+        # ⚡ 一键运行：批量 AI 提取（仅 HTML / 北单模式可用）
+        self.batch_run_btn = QPushButton("⚡ 一键运行")
+        self.batch_run_btn.setStyleSheet(orange_style)
+        self.batch_run_btn.clicked.connect(self._on_batch_run)
+        self.batch_run_btn.setEnabled(self.data_mode in ('html', 'bd'))
+
         orange_btn_layout.addWidget(self.fill_btn)
         orange_btn_layout.addWidget(refresh_btn)
         orange_btn_layout.addWidget(settings_btn)
         orange_btn_layout.addWidget(self.ai_fill_btn)
+        orange_btn_layout.addWidget(self.batch_run_btn)
         orange_btn_layout.addStretch()
 
         # ── 蓝色按钮行 ──
@@ -433,9 +454,15 @@ class EnhancedDataEditor(QMainWindow):
         sort_btn.clicked.connect(self.sort)
         json_btn.clicked.connect(self.export_json)
 
+        # 📤 一键导出：汇总所有机构/比赛的写入操作，一次 load + 一次 save
+        batch_export_btn = QPushButton("📤 一键导出")
+        batch_export_btn.setStyleSheet(blue_style)
+        batch_export_btn.clicked.connect(self._batch_export)
+
         blue_btn_layout.addWidget(open_btn)
         blue_btn_layout.addWidget(save_btn)
         blue_btn_layout.addWidget(export_btn)
+        blue_btn_layout.addWidget(batch_export_btn)
         blue_btn_layout.addWidget(sort_btn)
         blue_btn_layout.addWidget(json_btn)
         blue_btn_layout.addStretch()
@@ -447,6 +474,10 @@ class EnhancedDataEditor(QMainWindow):
         
         main_layout.addLayout(right_layout)
         self.setCentralWidget(main_widget)
+
+        # 接受把图片 / HTML 文件拖进主窗口（需求：Update_require_2026-10-13_2.md）
+        # 子控件（表格、日志框等）默认不接受拖放，Qt 会把拖放事件冒泡到这里
+        self.setAcceptDrops(True)
         
         # 初始化显示
         self.radio_group.buttonClicked.connect(self.refresh_table)
@@ -481,7 +512,7 @@ class EnhancedDataEditor(QMainWindow):
         right_layout.addWidget(self.log_output)  # 添加到右侧布局
 
         # 版本号标签（不起眼的右下角）
-        version_label = QLabel("v4.0.1")
+        version_label = QLabel("v4.0.2-preview")
         version_label.setStyleSheet("color: #999; font-size: 10px; padding: 2px;")
         version_label.setAlignment(Qt.AlignRight | Qt.AlignBottom)
         right_layout.addWidget(version_label)
@@ -635,6 +666,9 @@ class EnhancedDataEditor(QMainWindow):
         self._rebuild_radio_buttons()
         # "填入数据" 仅对图片模式开放（BD 后续加入AI功能后再启用）
         self.fill_btn.setVisible(mode == 'pic')
+        # "⚡ 一键运行" 仅 HTML / 北单模式可用（图片模式没有可交 AI 的 HTML 源文件）
+        if hasattr(self, 'batch_run_btn'):
+            self.batch_run_btn.setEnabled(mode in ('html', 'bd'))
         # 刷新表格
         self.refresh_table()
 
@@ -698,11 +732,12 @@ class EnhancedDataEditor(QMainWindow):
             QMessageBox.warning(self, "警告", f"读取失败: {str(e)}")
 
     def _on_ai_fill(self):
-        """AI 填入：选择新预测或查看历史"""
+        """AI 填入：选择新预测 / 从剪贴板粘贴图片 / 查看历史"""
         msg = QMessageBox(self)
         msg.setWindowTitle("AI 填入")
         msg.setText("请选择操作：")
         btn_new = msg.addButton("🤖 新预测", QMessageBox.ActionRole)
+        btn_paste = msg.addButton("📋 从剪贴板粘贴图片", QMessageBox.ActionRole)
         btn_history = msg.addButton("📂 历史预测", QMessageBox.ActionRole)
         msg.addButton("取消", QMessageBox.RejectRole)
         msg.exec_()
@@ -717,8 +752,73 @@ class EnhancedDataEditor(QMainWindow):
             )
             if file:
                 self._ai_fill_from_path(file)
+        elif clicked == btn_paste:
+            self._on_paste_image()
         elif clicked == btn_history:
             self._show_ai_history()
+
+    # ---------------- 剪贴板粘贴 / 拖放（需求：Update_require_2026-10-13_2.md） ----------------
+
+    def _on_paste_image(self):
+        """📋 从剪贴板粘贴图片 → 与"选择图片文件"走完全相同的分析链路
+
+        剪贴板形态由 src.image_source 解析：位图落盘归档到 pic/<日期>/，
+        资源管理器复制的图片文件则直接复用其路径（不重复落盘）。
+        拿到路径后交给现有的 _ai_fill_from_path()，不重复任何业务逻辑。
+        """
+        path, reason = image_source.clipboard_image_path(logger)
+        if not path:
+            QMessageBox.information(self, "提示", reason or "剪贴板中没有图片")
+            return
+        self.log_output.append(f"📋 已从剪贴板取图：{os.path.basename(path)}")
+        self._ai_fill_from_path(path)
+
+    def dragEnterEvent(self, event):
+        """接受"含本地文件"或"含图片字节"的拖放，其余不响应
+
+        含图片字节这一条是为浏览器/微信拖出的图片准备的：它们往往没有本地文件。
+        这里用轻量判断（只看格式名），不解码整张图。
+        """
+        mime = event.mimeData()
+        if (image_source.local_paths_from_mime(mime)
+                or image_source.mime_has_image_bytes(mime)):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        """松手后取第一个受支持的文件（或图片字节），交给现有 AI 分析链路"""
+        mime = event.mimeData()
+        paths = image_source.local_paths_from_mime(mime)
+        if not paths:
+            # 从浏览器/微信拖出的图片通常只有图片字节、没有本地文件 → 归档后照常分析
+            saved = image_source.save_image_from_mime(mime, self.logger)
+            if not saved:
+                event.ignore()
+                return
+            event.acceptProposedAction()
+            self.log_output.append(
+                f"📥 拖入图片（无本地文件，已归档）：{os.path.basename(saved)}")
+            self._ai_fill_from_path(saved)
+            return
+        event.acceptProposedAction()
+        self._accept_dropped(paths)
+
+    def _accept_dropped(self, paths):
+        """处理拖入的文件（图片走识别、HTML 走 HTML 分析，与现有分流一致）"""
+        path, ignored = image_source.first_supported_path(paths)
+        if not path:
+            QMessageBox.warning(
+                self, "提示",
+                "拖入的文件都不支持：仅支持 png / jpg / jpeg / bmp 图片与 html 文件")
+            return
+        if ignored:
+            QMessageBox.information(
+                self, "提示",
+                f"一次只处理一个文件，已取：{os.path.basename(path)}\n"
+                f"其余 {ignored} 个已忽略")
+        self.log_output.append(f"📥 拖入文件：{os.path.basename(path)}")
+        self._ai_fill_from_path(path)
 
     def _show_ai_history(self):
         """查看历史 AI 预测结果（带日期/文件名筛选）"""
@@ -833,57 +933,304 @@ class EnhancedDataEditor(QMainWindow):
             self.logger.info(f"AI 填入 {len(selected)} 条预测")
             self.log_output.append(f"✅ AI 已填入 {len(selected)} 条预测")
 
+    def selected_item_name(self) -> str:
+        """左侧当前选中的机构 / 图片类别名（BatchRunnerMixin 取目标用；服务版由任务参数给出）"""
+        btn = self.radio_group.checkedButton() if hasattr(self, 'radio_group') else None
+        return btn.text() if btn is not None else ""
+
+    # 兼容旧调用名（历史代码与回归用例使用 _selected_item_name）
+    _selected_item_name = selected_item_name
+
     def _apply_ai_predictions(self, predictions: list, source_file: str = ""):
-        """将确认的 AI 预测写入对应模式的数据存储"""
-        if self.data_mode == 'bd':
-            self._apply_ai_bd(predictions)
-        else:
-            self._apply_ai_jc(predictions, source_file=source_file)
-        self.is_dirty = True
+        """把确认的 AI 预测写入「左侧当前选中项」（编排逻辑在 BatchRunnerMixin）"""
+        result = self.apply_predictions(predictions, source_file=source_file)
+        self._report_ai_apply(result)
+        if result["applied"]:
+            self.is_dirty = True
         self.refresh_table()
 
-    def _apply_ai_bd(self, predictions: list):
-        """BD 模式：写入 bd_data_storage（汇总所有机构的比分分组）"""
-        all_groups = []
-        code_target = None
-        for pred in predictions:
-            code = str(pred.get("code", ""))
-            scores = pred.get("scores", [])
-            if not code_target:
-                code_target = code
-            # 该机构的比分组（已是 2 位数字分组）
-            group = [str(x).strip() for x in scores if str(x).strip().isdigit()]
-            if group:
-                all_groups.append(group)
-        # 一次性写入该比赛的所有比分分组
-        if code_target:
-            for info in self.bd_data_storage.values():
-                if info.get("code") == code_target:
-                    info["scores"] = all_groups
-                    break
+    def _report_ai_apply(self, result: dict):
+        """显示填入结果；**写入 0 条时弹提示**（报告生成在 BatchRunnerMixin）"""
+        self.log_output.append(result["report"]["line"])
+        if not result["report"]["ok"]:
+            QMessageBox.warning(
+                self, "未写入任何数据",
+                "AI 提取到了内容，但没有一条能写入目标位置。\n\n"
+                + result["report"]["detail"] +
+                "\n\n常见原因：AI 返回的编号不在当前预测者/比赛下，"
+                "或左侧未选中目标项。")
 
-    def _apply_ai_jc(self, predictions: list, source_file: str = ""):
-        """JC/HTML 模式：写入 data_storage"""
-        # 机构名：pred 无 label 时，从 source_file 文件名推断
-        default_category = os.path.splitext(os.path.basename(source_file or ""))[0] if source_file else ""
-        for pred in predictions:
-            category = pred.get("label", "") or pred.get("category", "") or default_category
-            code = str(pred.get("code", "")).zfill(3)
-            scores = pred.get("scores", [])
-            # 扁平化 scores 到 4 个比分位
-            flat = []
-            for s in scores:
-                if isinstance(s, list):
-                    flat.extend(str(x).strip() for x in s)
-                else:
-                    flat.append(str(s).strip())
-            vals = [x for x in flat if x]
-            while len(vals) < 4:
-                vals.append("")
-            vals = vals[:4]
-            # 写入匹配的 category+code
-            if category in self.data_storage and code in self.data_storage[category]:
-                self.data_storage[category][code] = vals
+    # ================= AI 一键批量运行（需求：Update_require_2026-10-13_1.md） =================
+
+    def _on_batch_run(self):
+        """⚡ 一键运行：批量 AI 提取（跳过预览，禁止覆盖已有值）"""
+        if self.data_mode not in ('html', 'bd'):
+            QMessageBox.warning(self, "提示", "图片模式没有可交给 AI 分析的 HTML 源文件")
+            return
+        if not ai_config.get_api_key():
+            QMessageBox.warning(
+                self, "提示",
+                "未配置 AI API Key\n请在「设置 → AI 设置」中配置后再运行")
+            return
+        if self.batch_thread is not None and self.batch_thread.isRunning():
+            QMessageBox.warning(self, "提示", "已有批量任务正在进行，请等待完成")
+            return
+
+        # 强制白名单：无白名单则拒绝运行（避免无约束下 AI 补全不存在的编号）
+        whitelist = self._current_whitelist()
+        if not whitelist:
+            QMessageBox.warning(
+                self, "提示",
+                "未配置当前模式的 Excel 白名单（Excel 文件 + Sheet）。\n\n"
+                "批量运行要求必须有白名单约束，否则 AI 可能补全不存在的编号。\n"
+                "请先在路径选择或「设置」中配置后重试。")
+            return
+
+        jobs, pre_failed = self._collect_batch_jobs()
+        if not jobs:
+            if pre_failed:
+                detail = "\n".join(f"· {n}：{r}" for n, r in pre_failed[:20])
+                QMessageBox.warning(self, "无文件可处理",
+                                    f"没有任何可分析的源文件：\n\n{detail}")
+            else:
+                QMessageBox.information(self, "提示", "无文件可处理")
+            return
+
+        self._start_batch(jobs, whitelist, pre_failed)
+
+    def _start_batch(self, jobs, whitelist, pre_failed=None):
+        """启动批量线程与进度窗（首次运行与"重试失败项"共用）"""
+        from src.worker import BatchAIWorker
+
+        self._batch_jobs = list(jobs)
+        self._batch_pre_failed = list(pre_failed or [])
+        self._batch_results = {}
+        self._batch_failures = []
+        self._batch_skipped = 0
+        self._batch_whitelist = whitelist
+
+        labels = [label for label, _ in self._batch_jobs]
+        self.batch_dialog = BatchProgressDialog(labels, parent=self)
+        self.batch_dialog.cancel_requested.connect(self._on_batch_cancel)
+        self.batch_dialog.background_requested.connect(self._on_batch_background)
+        self.batch_dialog.retry_requested.connect(self._on_batch_retry)
+        self.batch_dialog.view_requested.connect(self._on_batch_view)
+        self.batch_dialog.show()
+
+        self.batch_thread = QThread()
+        self.batch_worker = BatchAIWorker(self._batch_jobs, self._batch_ai_mode(), whitelist)
+        self.batch_worker.moveToThread(self.batch_thread)
+
+        self.batch_thread.started.connect(self.batch_worker.run)
+        self.batch_worker.started_item.connect(self._on_batch_started)
+        self.batch_worker.item_done.connect(self._on_batch_item_done)
+        self.batch_worker.item_failed.connect(self._on_batch_item_failed)
+        self.batch_worker.finished.connect(self._on_batch_finished)
+        self.batch_worker.finished.connect(self.batch_thread.quit)
+        self.batch_thread.finished.connect(self._on_batch_thread_finished)
+
+        self.batch_thread.start()
+        self.logger.info(f"批量 AI 提取启动：{len(self._batch_jobs)} 个文件"
+                         f"（跳过预览、禁止覆盖已有值）")
+        self.log_output.append(f"⚡ 批量提取已启动：{len(self._batch_jobs)} 个文件")
+
+    def _on_batch_started(self, index, total, label):
+        if self.batch_dialog:
+            self.batch_dialog.mark_running(index, label, total)
+
+    def _on_batch_item_done(self, index, label, result):
+        """子线程完成一个文件 → 主线程写入内存（禁止覆盖已有值）"""
+        predictions = result.get("predictions", [])
+        if self.data_mode == 'bd':
+            applied, skipped = self._apply_ai_bd(predictions, overwrite=False,
+                                                 label_override=label)
+        else:
+            applied, skipped = self._apply_ai_jc(predictions, overwrite=False,
+                                                 category_override=label)
+        self._batch_results[label] = result
+        self._batch_skipped += skipped
+        if applied:
+            self.is_dirty = True
+        if self.batch_dialog:
+            self.batch_dialog.mark_done(index, label, applied)
+        self.logger.info(f"批量填入 {label}：写入 {applied} 条，跳过已有值 {skipped} 条")
+
+    def _on_batch_item_failed(self, index, label, error):
+        if self.batch_dialog:
+            self.batch_dialog.mark_failed(index, label, error)
+        self.logger.error(f"批量提取失败 {label}：{error}")
+
+    def _on_batch_finished(self, failed, cancelled):
+        """批量结束（正常完成或被取消）"""
+        self._batch_failures = list(self._batch_pre_failed) + list(failed)
+
+        if self.batch_dialog:
+            self.batch_dialog.mark_finished(len(self._batch_failures), cancelled)
+
+        self.refresh_table()
+
+        done = len(self._batch_jobs) - len(failed)
+        lines = [f"处理完成：成功 {done} 项，失败 {len(self._batch_failures)} 项"]
+        if self._batch_skipped:
+            lines.append(f"因目标位置已有数据而跳过 {self._batch_skipped} 条（未覆盖）")
+        if cancelled:
+            lines.insert(0, "已取消：后续文件未处理，已完成的结果已保留")
+
+        # 未被取消 → 全部完成后做一次本地 JSON 备份（JSON②）
+        if not cancelled:
+            try:
+                if self.export_json():
+                    lines.append("已自动完成本地 JSON 备份（json/<今天>.json）")
+            except Exception:
+                self.logger.exception("批量完成后自动备份 JSON 失败")
+
+        if self._batch_failures:
+            detail = "\n".join(f"· {n}：{e}" for n, e in self._batch_failures[:20])
+            if len(self._batch_failures) > 20:
+                detail += f"\n… 另有 {len(self._batch_failures) - 20} 项，详见日志"
+            lines.append("\n失败清单：\n" + detail)
+            QMessageBox.warning(self, "批量提取结束", "\n".join(lines))
+        else:
+            QMessageBox.information(self, "批量提取结束", "\n".join(lines))
+
+        self.log_output.append(f"⚡ 批量提取结束：成功 {done} / 失败 {len(self._batch_failures)}")
+        self.logger.info(f"批量提取结束：成功 {done} 项，失败 {len(self._batch_failures)} 项，"
+                         f"跳过 {self._batch_skipped} 条，取消={cancelled}")
+
+    def _on_batch_thread_finished(self):
+        if self.batch_worker is not None:
+            self.batch_worker.deleteLater()
+            self.batch_worker = None
+        self.batch_thread = None
+
+    def _on_batch_cancel(self):
+        """取消：停派发新文件，等当前文件跑完，已完成结果保留"""
+        if self.batch_worker is not None:
+            self.batch_worker.cancel()
+        if self.batch_dialog:
+            self.batch_dialog.summary.setText("正在取消…等待当前文件完成（最长等一次 AI 超时）")
+        self.logger.info("已请求取消批量提取")
+
+    def _on_batch_background(self):
+        """后台运行：关闭进度窗，批量线程继续处理"""
+        self.logger.info("批量提取转入后台运行（进度窗已关闭，处理继续）")
+        self.log_output.append("⚡ 批量提取转入后台运行")
+
+    def _on_batch_retry(self):
+        """重试失败项：用失败清单重建任务（仅限仍有源文件的条目）"""
+        if self.batch_thread is not None and self.batch_thread.isRunning():
+            QMessageBox.warning(self, "提示", "当前批量任务尚未结束，请稍后再试")
+            return
+        failed_labels = {label for label, _ in self._batch_failures}
+        retry_jobs = [(label, path) for label, path in self._batch_jobs
+                      if label in failed_labels]
+        if not retry_jobs:
+            QMessageBox.information(
+                self, "提示",
+                "没有可重试的文件：本次没有失败项，或失败项均缺少源文件")
+            return
+        whitelist = self._batch_whitelist or self._current_whitelist()
+        if not whitelist:
+            QMessageBox.warning(self, "提示", "白名单已失效，请重新配置后再运行")
+            return
+        if self.batch_dialog:
+            self.batch_dialog.close()
+            self.batch_dialog = None
+        self.logger.info(f"重试失败项：{len(retry_jobs)} 个文件")
+        self._start_batch(retry_jobs, whitelist, [])
+
+    def _on_batch_view(self, row):
+        """只读查看某一行已完成的提取结果"""
+        if row < 0 or row >= len(self._batch_jobs):
+            return
+        label, path = self._batch_jobs[row]
+        result = self._batch_results.get(label)
+        if not result:
+            QMessageBox.information(self, "提示", f"{label} 暂无提取结果")
+            return
+        dialog = AiPreviewDialog(
+            result.get("predictions", []), self.data_mode, parent=self,
+            raw=result.get("raw", ""), method=result.get("method", ""),
+            source_file=path, read_only=True)
+        dialog.exec_()
+
+    # ---------------- AI 一键批量导出（汇总一次写入） ----------------
+
+    def _confirm_batch_invalid(self, invalid_items: list) -> bool:
+        """批量导出的无效数据统一确认（只弹一次）"""
+        detail = "\n".join(invalid_items[:20])
+        if len(invalid_items) > 20:
+            detail += f"\n… 还有 {len(invalid_items) - 20} 条"
+        reply = QMessageBox.question(
+            self, "验证失败",
+            f"以下数据验证未通过（共 {len(invalid_items)} 条），无效项将按空值处理：\n\n"
+            f"{detail}\n\n是否继续导出？",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        return reply == QMessageBox.Yes
+
+    def _batch_export(self):
+        """📤 一键导出（GUI 包装：汇总在 BatchRunnerMixin，写入走后台线程）"""
+        if self.data_mode == 'pic':
+            QMessageBox.warning(self, "提示", "图片模式不支持一键导出，请逐个分类导出")
+            return
+        if not self._ensure_excel_writable():
+            return
+
+        self.save_changes()   # 先把当前表格里的编辑写回内存
+
+        if self.data_mode == 'bd':
+            self._batch_export_bd()
+            return
+
+        all_ops, invalid_all, missing = self.collect_all_export_ops()
+
+        if missing:
+            QMessageBox.warning(
+                self, "警告",
+                "以下机构未匹配成功，已跳过（请检查映射表）：\n" + "\n".join(missing[:20]))
+        if not all_ops:
+            QMessageBox.warning(self, "提示", "没有可导出的数据")
+            return
+        if invalid_all and not self._confirm_batch_invalid(invalid_all):
+            return
+
+        self.logger.info(f"批量导出：{len(all_ops)} 处写入操作，一次保存")
+        self._run_write_worker(all_ops, f"批量导出 {len(all_ops)} 处")
+
+    def _batch_export_bd(self):
+        """BD 一键导出（GUI 包装：收集在 BatchRunnerMixin，导出走 export_bd_data）"""
+        excel_path = self.bd_excel_path or self.excel_path or ""
+        if not excel_path:
+            QMessageBox.warning(self, "警告", "未设置 BD Excel 路径，请先配置")
+            return
+        sheet = self.bd_sheet_name or self.sheet_name
+
+        infos, invalid = self.collect_bd_export_infos()
+
+        if not infos:
+            QMessageBox.warning(self, "警告", "无数据可导出")
+            return
+        if invalid and not self._confirm_batch_invalid(invalid):
+            return
+
+        progress = QProgressDialog("正在批量导出北单数据…", None, 0, 0, self)
+        progress.setWindowTitle("请稍候")
+        progress.setWindowModality(Qt.WindowModal)
+        progress.show()
+        QApplication.processEvents()
+        try:
+            success, message = export_bd_data(
+                infos, excel_path, sheet, self._bd_export_rows, logger)
+        finally:
+            progress.close()
+
+        if success:
+            self.is_dirty = False
+            self.logger.info(message)
+            self.log_output.append(f"✅ {message}")
+            QMessageBox.information(self, "批量导出完成", message)
+        else:
+            QMessageBox.warning(self, "错误", message)
 
     def _fill_bd_from_html(self, selected_item):
         """BD 模式：从北单N.html 详情文件中解析比分并填入"""
@@ -1338,7 +1685,7 @@ class EnhancedDataEditor(QMainWindow):
             pass  # 窗口已销毁，忽略回调
     
     def sort(self):
-        """排序 - 内存统计在主线程，写入在后台线程。BD 模式使用专用排序路径。"""
+        """排序（GUI 包装：统计在 BatchRunnerMixin，写入在后台线程）"""
         try:
             self.save_changes()
 
@@ -1346,15 +1693,7 @@ class EnhancedDataEditor(QMainWindow):
                 self._sort_bd()
                 return
 
-            dict_counter = collect_sort_stats(self.data_storage, self.pic_categories, logger)
-
-            write_ops = []
-            for column, contents in dict_counter.items():
-                try:
-                    _, column_location = self.get_info.get_location(header_num=column)
-                    write_ops.append((84, column_location, contents))
-                except Exception as e:
-                    logger.exception(f"排序写入失败 - 列: {column}")
+            write_ops, dict_counter = self.collect_sort_ops()
 
             if write_ops:
                 self._run_write_worker(write_ops, "排序")
@@ -1381,53 +1720,19 @@ class EnhancedDataEditor(QMainWindow):
             QMessageBox.critical(self, "错误", f"BD 排序失败：{str(e)}")
 
     def export_json(self):
-        """导出JSON文件 - BD模式单独保存"""
-        try:
-            if not os.path.exists("./json"):
-                os.makedirs("./json")
-
-            if self.data_mode == 'bd':
-                json_path = f"./json/bd_{datetime.now().strftime('%Y-%m-%d')}.json"
-                # BD 格式：{code: {home, away, scores: [[...]]}}
-                export_data = {}
-                for label, info in self.bd_data_storage.items():
-                    if info.get("scores"):
-                        export_data[label] = {
-                            "code": info["code"],
-                            "home": info["home"],
-                            "away": info["away"],
-                            "scores": info["scores"],
-                        }
-                with open(json_path, 'w', encoding='utf-8') as f:
-                    json.dump(export_data, f, ensure_ascii=False, indent=4)
-                logger.info(f"BD JSON 导出成功: {json_path} ({len(export_data)} 场比赛)")
-                self.is_dirty = False
-                return True
-
-            # JC/HTML 模式（原有逻辑）
-            # 转置为 code→category→scores 格式
-            new_json_data = {}
-            for category, codes in self.data_storage.items():
-                for code, scores in codes.items():
-                    if code not in new_json_data:
-                        new_json_data[code] = {}
-                    new_json_data[code][category] = scores
-
-            json_path = f"./json/{datetime.now().strftime('%Y-%m-%d')}.json"
-            with open(json_path, 'w', encoding='utf-8') as f:
-                json.dump(new_json_data, f, ensure_ascii=False, indent=4)
-            logger.info(f"JSON文件导出成功: {json_path}")
-            self.is_dirty = False
-            return True
-        except Exception as e:
-            logger.exception("JSON导出失败")
-            QMessageBox.critical(self, "错误", f"JSON导出失败：{str(e)}")
-            return False
+        """导出JSON文件（GUI 包装：写出逻辑在 BatchRunnerMixin）"""
+        ok, message = self.export_json_file()
+        if not ok:
+            QMessageBox.critical(self, "错误", message)
+        return ok
 
     def closeEvent(self, event):
         """关闭主窗口时保存窗口位置和大小"""
         if hasattr(self, '_excel_check_timer'):
             self._excel_check_timer.stop()  # 停止 Excel 检测定时器
+        # 批量线程仍在运行 → 请求取消，避免窗口销毁后子线程继续发信号
+        if getattr(self, 'batch_worker', None) is not None:
+            self.batch_worker.cancel()
         geom = self.saveGeometry()
         settings = QSettings("config.ini", QSettings.IniFormat)
         settings.setValue("window/geometry", geom)

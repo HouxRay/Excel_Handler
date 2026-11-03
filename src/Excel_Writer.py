@@ -1,7 +1,59 @@
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 from src.Excel_Info import GetWriteInfo
+from src.log_setup import logger
 from PyQt5.QtWidgets import QMessageBox, QApplication
+
+# ---------------------------------------------------------------------------
+# 人工确认策略（可注入）
+#
+# `write_info` 是**交互式**单值写入（会弹窗询问）。桌面版保持默认弹窗；
+# **无界面服务必须注入策略**，否则模态弹窗在容器里会永久阻塞。
+#
+# 注意：批量路径（`batch_write_cell/list/dict`）本来就是**静默**的（无验证、无弹窗），
+# 服务与批量导出走的都是这一条，不涉及弹窗。
+# ---------------------------------------------------------------------------
+_CONFIRM_HANDLER = None
+
+
+def set_confirm_handler(handler):
+    """注入"是否需要人工确认"的策略；传 ``None`` 恢复默认的 QMessageBox 行为。
+
+    handler 签名：``handler(title: str, message: str, default_yes: bool) -> bool``
+    返回 True 表示回答"是"，False 表示"否"。
+    """
+    global _CONFIRM_HANDLER
+    _CONFIRM_HANDLER = handler
+
+
+def get_confirm_handler():
+    """当前确认策略（None 表示用默认弹窗）"""
+    return _CONFIRM_HANDLER
+
+
+def headless_confirm(title, message, default_yes=True) -> bool:
+    """无界面环境的确认策略：**不询问，直接采用弹窗的默认按钮**，并记一条告警。
+
+    即"该拦的拦住、该跳的跳过"，既不阻塞也不会把非法值写进 Excel。
+    用法：``Excel_Writer.set_confirm_handler(headless_confirm)``
+    """
+    logger.warning(
+        f"[无界面] {title}：{message.replace(chr(10), ' ')} → 采用默认选择"
+        f"「{'是' if default_yes else '否'}」")
+    return bool(default_yes)
+
+
+def _ask(title, message, default_yes=True) -> bool:
+    """询问是/否：桌面走弹窗，无界面走注入策略"""
+    if _CONFIRM_HANDLER is not None:
+        return bool(_CONFIRM_HANDLER(title, message, default_yes))
+    app = QApplication.instance()
+    parent = app.activeWindow() if app is not None else None
+    default_btn = QMessageBox.Yes if default_yes else QMessageBox.No
+    reply = QMessageBox.question(parent, title, message,
+                                 QMessageBox.Yes | QMessageBox.No, default_btn)
+    return reply == QMessageBox.Yes
+
 import sys
 
 MATCH_DICT={
@@ -162,9 +214,7 @@ class ExcelWriter:
                     if not validation_result['valid']:
                         # 显示验证失败的提示
                         message = f"位置 ({line_location}, {column_location + idx}) 写入失败:\n{validation_result['message']}\n\n是否继续写入其他数据？"
-                        reply = QMessageBox.question(self.app.activeWindow(), '验证失败', message,
-                                                   QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-                        if reply == QMessageBox.No:
+                        if not _ask('验证失败', message, default_yes=False):
                             return  0# 用户选择不继续
                         continue  # 跳过这个项目
                     
@@ -191,9 +241,7 @@ class ExcelWriter:
                 if not validation_result['valid']:
                     # 显示验证失败的提示
                     message = f"位置 ({line_location}, {column_location}) 写入失败:\n{validation_result['message']}\n\n是否取消写入？"
-                    reply = QMessageBox.question(self.app.activeWindow(), '验证失败', message,
-                                               QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
-                    if reply == QMessageBox.Yes:
+                    if _ask('验证失败', message, default_yes=True):
                         return  0 # 用户选择取消写入
                 
                 # 显示确认对话框
@@ -203,9 +251,7 @@ class ExcelWriter:
                 if str(value).lower() in match_dict.keys():
                     message += f" -> {match_dict[str(value).lower()]}"
                 
-                reply = QMessageBox.question(self.app.activeWindow(), '确认写入', message,
-                                           QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
-                if reply == QMessageBox.No:
+                if not _ask('确认写入', message, default_yes=True):
                     return  0# 用户取消写入
                 
                 target_cell = self.ws.cell(row=line_location, column=column_location)

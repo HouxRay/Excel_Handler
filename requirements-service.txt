@@ -1,0 +1,8 @@
+# 无界面服务镜像的纯 Python 依赖（apt 装不到的）
+#
+# 由 tests/test_service_deps.py 守卫：服务端出现的第三方模块必须在这里声明。
+# 想固定版本时，把这里改成 `flask==3.1.3` 这种形式即可（推荐上 NAS 前固定一次）。
+flask
+waitress
+pypinyin
+openai

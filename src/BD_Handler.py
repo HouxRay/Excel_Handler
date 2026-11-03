@@ -206,45 +206,76 @@ def load_bd_config(excel_path, html_dir, sheet_name, bd_json_restore, logger):
     return bd_categories, bd_data_storage
 
 
-def export_bd_data(bd_info, excel_path, sheet, _bd_export_rows, logger):
+def export_bd_data(bd_infos, excel_path, sheet, _bd_export_rows, logger):
     """
     BD 模式导出 — 纵向追加写入，覆盖已有导出行。
+
+    bd_infos: 单个 bd_info 字典，或 bd_info 列表。
+        传列表时只 load 一次工作簿、只 save 一次（批量导出用），
+        单个字典的调用方式与之完全兼容。
     Returns: (success, message)
     """
-    scores = bd_info.get("scores", [])
-    code = bd_info.get("code", "")
+    if isinstance(bd_infos, dict):
+        bd_infos = [bd_infos]
 
     writer = ExcelWriter(excel_path, sheet)
     col_map = find_bd_columns(writer.ws)
-    if code not in col_map:
-        return False, f"Excel 中未找到编号 {code} 的列"
 
-    sc = col_map[code]["start_col"]
+    done = 0
+    total_rows = 0
+    skipped = []
 
-    prev_info = _bd_export_rows.get(code)
-    if prev_info is not None:
-        start_row, prev_count = prev_info
+    for bd_info in bd_infos:
+        scores = bd_info.get("scores", [])
+        code = bd_info.get("code", "")
+
+        if code not in col_map:
+            skipped.append(code)
+            continue
+
+        sc = col_map[code]["start_col"]
+
+        prev_info = _bd_export_rows.get(code)
+        if prev_info is not None:
+            # 覆盖上次导出的行，避免重复写入
+            start_row, prev_count = prev_info
+            for r in range(start_row, start_row + prev_count):
+                for c in range(4):
+                    writer.ws.cell(row=r, column=sc + c).value = None
+        else:
+            start_row = 2
+            while start_row <= writer.ws.max_row:
+                if writer.ws.cell(row=start_row, column=sc).value in (None, ""):
+                    break
+                start_row += 1
+
         row = start_row
-        for r in range(row, row + prev_count):
-            for c in range(4):
-                writer.ws.cell(row=r, column=sc + c).value = None
-    else:
-        start_row = 2
-        while start_row <= writer.ws.max_row:
-            if writer.ws.cell(row=start_row, column=sc).value in (None, ""):
-                break
-            start_row += 1
-        row = start_row
+        for score_set in scores:
+            normalized = [apply_keyboard_mappings(str(s)) for s in score_set[:4]]
+            writer.batch_write_list(row, sc, normalized)
+            row += 1
 
-    for score_set in scores:
-        normalized = [apply_keyboard_mappings(str(s)) for s in score_set[:4]]
-        writer.batch_write_list(row, sc, normalized)
-        row += 1
+        _bd_export_rows[code] = (start_row, len(scores))
+        done += 1
+        total_rows += len(scores)
+
+    # 无任何可写入项：不保存（与单场导出的原行为一致）
+    if done == 0:
+        if len(bd_infos) == 1:
+            return False, f"Excel 中未找到编号 {bd_infos[0].get('code', '')} 的列"
+        return False, f"BD 导出失败：{len(bd_infos)} 场均未在 Excel 中找到对应编号列"
 
     writer.save()
-    _bd_export_rows[code] = (start_row, len(scores))
-    logger.info(f"BD 导出完成: {len(scores)} 行")
-    return True, f"BD 导出完成: {len(scores)} 行"
+
+    if skipped:
+        msg = (f"BD 导出部分完成：已写入 {done} 场 / {total_rows} 行，"
+               f"以下编号在 Excel 中未找到列：{'、'.join(str(s) for s in skipped)}")
+        logger.warning(msg)
+        return False, msg
+
+    msg = f"BD 导出完成: {done} 场 / {total_rows} 行"
+    logger.info(msg)
+    return True, msg
 
 
 def sort_bd_data(bd_data_storage, excel_path, sheet, logger):

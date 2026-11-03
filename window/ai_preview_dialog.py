@@ -8,16 +8,22 @@ from PyQt5.QtCore import Qt
 
 
 class AiPreviewDialog(QDialog):
-    """AI 提取结果预览：表格展示，用户勾选/编辑要填入的行"""
+    """AI 提取结果预览：表格展示，用户勾选/编辑要填入的行
+
+    read_only=True 时为纯查看模式（批量运行的 [查看] 用）：隐藏勾选列、
+    比分列不可编辑、底部只有一个"关闭"按钮，不会产生任何数据变更。
+    """
 
     def __init__(self, predictions: list, mode: str = "bd", parent=None,
-                 raw: str = "", method: str = "", source_file: str = ""):
+                 raw: str = "", method: str = "", source_file: str = "",
+                 read_only: bool = False):
         super().__init__(parent)
         self.mode = mode
         self.raw = raw
         self.method = method
         self.source_file = source_file
-        self.setWindowTitle("AI 预测结果预览")
+        self.read_only = read_only
+        self.setWindowTitle("AI 预测结果预览（只读查看）" if read_only else "AI 预测结果预览")
         self.setGeometry(300, 200, 760, 500)
 
         layout = QVBoxLayout()
@@ -36,29 +42,38 @@ class AiPreviewDialog(QDialog):
         )
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        if read_only:
+            self.table.setColumnHidden(0, True)   # 只读查看无需勾选列
         self._populate(predictions)
         layout.addWidget(self.table)
 
         # 底部按钮
         btn_layout = QHBoxLayout()
-        select_all_btn = QPushButton("全选")
-        clear_btn = QPushButton("全不选")
-        select_all_btn.clicked.connect(lambda: self._set_all_checked(True))
-        clear_btn.clicked.connect(lambda: self._set_all_checked(False))
-        btn_layout.addWidget(select_all_btn)
-        btn_layout.addWidget(clear_btn)
+        if not read_only:
+            select_all_btn = QPushButton("全选")
+            clear_btn = QPushButton("全不选")
+            select_all_btn.clicked.connect(lambda: self._set_all_checked(True))
+            clear_btn.clicked.connect(lambda: self._set_all_checked(False))
+            btn_layout.addWidget(select_all_btn)
+            btn_layout.addWidget(clear_btn)
 
         raw_btn = QPushButton("📄 AI 原始返回")
         raw_btn.clicked.connect(self._show_raw)
         btn_layout.addWidget(raw_btn)
         btn_layout.addStretch()
 
-        ok_btn = QPushButton("✅ 确认填入")
-        cancel_btn = QPushButton("取消")
-        ok_btn.clicked.connect(self.accept)
-        cancel_btn.clicked.connect(self.reject)
-        btn_layout.addWidget(ok_btn)
-        btn_layout.addWidget(cancel_btn)
+        if read_only:
+            # 只读查看：不提供"确认填入"，避免与"批量已自动填内存"混淆
+            close_btn = QPushButton("关闭")
+            close_btn.clicked.connect(self.reject)
+            btn_layout.addWidget(close_btn)
+        else:
+            ok_btn = QPushButton("✅ 确认填入")
+            cancel_btn = QPushButton("取消")
+            ok_btn.clicked.connect(self.accept)
+            cancel_btn.clicked.connect(self.reject)
+            btn_layout.addWidget(ok_btn)
+            btn_layout.addWidget(cancel_btn)
         layout.addLayout(btn_layout)
 
         self.setLayout(layout)
@@ -68,10 +83,11 @@ class AiPreviewDialog(QDialog):
         self.predictions = predictions
         self.table.setRowCount(len(predictions))
         for row, pred in enumerate(predictions):
-            checkbox = QCheckBox()
-            checkbox.setChecked(True)
-            checkbox.setStyleSheet("margin-left: 8px;")
-            self.table.setCellWidget(row, 0, checkbox)
+            if not self.read_only:
+                checkbox = QCheckBox()
+                checkbox.setChecked(True)
+                checkbox.setStyleSheet("margin-left: 8px;")
+                self.table.setCellWidget(row, 0, checkbox)
 
             label = pred.get("label", "") or pred.get("category", "")
             code = str(pred.get("code", ""))
@@ -96,8 +112,9 @@ class AiPreviewDialog(QDialog):
             ]
             for col, text in enumerate(items, start=1):
                 item = QTableWidgetItem(text)
-                # 比分列(col 4)可编辑，其余只读
-                if col == 4:
+                # 比分列(col 4)与胜平负列(col 5)可编辑，其余只读；
+                # 只读查看模式下全部不可编辑
+                if col in (4, 5) and not self.read_only:
                     item.setFlags(item.flags() | Qt.ItemIsEditable)
                 else:
                     item.setFlags(item.flags() & ~Qt.ItemIsEditable)
@@ -126,7 +143,10 @@ class AiPreviewDialog(QDialog):
         dlg.exec_()
 
     def get_selected(self) -> list:
-        """返回用户勾选的 predictions（含表格中手动修改的比分）"""
+        """返回用户勾选的 predictions（含表格中手动修改的比分与胜平负）
+
+        只读查看模式（read_only=True）没有勾选框，恒返回 []。
+        """
         selected = []
         for row in range(self.table.rowCount()):
             cb = self.table.cellWidget(row, 0)
@@ -147,5 +167,17 @@ class AiPreviewDialog(QDialog):
                 else:
                     # 未修改，保留原始 scores
                     pred["scores"] = original
+
+                # 读取表格中可能被修改的胜平负（图片模式会写入这些槽位）
+                # 与比分不同，这里允许把整格清空：AI 取错列时用户可以直接擦掉
+                wdl_item = self.table.item(row, 5)
+                edited_wdl = wdl_item.text().strip() if wdl_item else ""
+                original_wdl = pred.get("wdl", [])
+                original_wdl_str = " ".join(str(w) for w in original_wdl)
+                if edited_wdl != original_wdl_str:
+                    pred["wdl"] = edited_wdl.split()
+                else:
+                    pred["wdl"] = original_wdl
+
                 selected.append(pred)
         return selected
