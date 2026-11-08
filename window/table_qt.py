@@ -12,16 +12,21 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
 from PyQt5.QtCore import Qt, QThread, QEvent, QSettings, QTimer
 from PyQt5.QtGui import QIcon
 
-from src.Excel_Info import GetWriteInfo
-from src.Excel_Writer import ExcelWriter, reload_match_dict
-from src.mapping_manager import apply_keyboard_mappings, get_keyboard_mappings
-from src.BD_Handler import parse_bd_detail, load_bd_config, export_bd_data, sort_bd_data
-from src.data_loader import load_pic_config, load_json_to_storage, load_bd_json, reinitialize_data
-from src.exporter import collect_export_write_ops, collect_sort_stats
-from src.log_setup import logger, setup_logger, QTextEditLogger
-from src.zip_handler import ensure_extracted
-from src import (ai_handler, ai_config, ai_storage, ai_alignment, ai_parser,
-                 image_source, app_paths)
+from src.excel.Excel_Info import GetWriteInfo
+from src.excel.Excel_Writer import ExcelWriter, reload_match_dict
+from src.common.mapping_manager import apply_keyboard_mappings, get_keyboard_mappings
+from src.sources.BD_Handler import parse_bd_detail, load_bd_config, export_bd_data, sort_bd_data
+from src.excel.data_loader import load_pic_config, load_json_to_storage, load_bd_json, reinitialize_data
+from src.excel.exporter import collect_export_write_ops, collect_sort_stats
+from src.common.log_setup import logger, setup_logger, QTextEditLogger
+from src.common.zip_handler import ensure_extracted
+from src.ai import ai_handler
+from src.ai import ai_config
+from src.ai import ai_storage
+from src.ai import ai_alignment
+from src.ai import ai_parser
+from src.ai import image_source
+from src.common import app_paths
 from src.service.batch_runner import BatchRunnerMixin
 from window.html_viewer import NewWindow
 from window.settings_dialog import SettingsDialog
@@ -512,7 +517,7 @@ class EnhancedDataEditor(BatchRunnerMixin, QMainWindow):
         right_layout.addWidget(self.log_output)  # 添加到右侧布局
 
         # 版本号标签（不起眼的右下角）
-        version_label = QLabel("v4.0.2-preview")
+        version_label = QLabel("v4.0.5-preview")
         version_label.setStyleSheet("color: #999; font-size: 10px; padding: 2px;")
         version_label.setAlignment(Qt.AlignRight | Qt.AlignBottom)
         right_layout.addWidget(version_label)
@@ -1000,7 +1005,7 @@ class EnhancedDataEditor(BatchRunnerMixin, QMainWindow):
 
     def _start_batch(self, jobs, whitelist, pre_failed=None):
         """启动批量线程与进度窗（首次运行与"重试失败项"共用）"""
-        from src.worker import BatchAIWorker
+        from src.desktop.worker import BatchAIWorker
 
         self._batch_jobs = list(jobs)
         self._batch_pre_failed = list(pre_failed or [])
@@ -1625,7 +1630,7 @@ class EnhancedDataEditor(BatchRunnerMixin, QMainWindow):
             self.worker_thread.wait(3000)
             self.worker_thread = None
 
-        from src.worker import ExcelWriteWorker
+        from src.desktop.worker import ExcelWriteWorker
 
         self.worker_thread = QThread()
         self.worker = ExcelWriteWorker(
@@ -2021,7 +2026,7 @@ class EnhancedDataEditor(BatchRunnerMixin, QMainWindow):
             self.logger.exception("重新加载数据失败")
 
 if __name__ == "__main__":
-    from src.Excel_Info import GetWriteInfo
+    from src.excel.Excel_Info import GetWriteInfo
     file_path = r"D:\Excel_Hander\excel\2025-05-19-竞彩"
     excel_path = r"D:\Excel_Hander\excel\副本5-19奥.xlsx"
     Eif = GetWriteInfo(file_path, excel_path)

@@ -1,6 +1,6 @@
 """导出/排序 — 收集写入操作和统计数据"""
 from collections import Counter, defaultdict
-from src.Excel_Writer import ExcelWriter
+from src.excel.Excel_Writer import ExcelWriter
 
 
 def collect_export_write_ops(get_info, data_storage, selected_item, ex_header,

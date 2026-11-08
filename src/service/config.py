@@ -164,8 +164,11 @@ class ServiceConfig:
         elif not spec.get("excel_path"):
             raise ConfigError("必须提供 excel_path（或用 target 引用档案）")
 
-        if not spec.get("html_dir"):
-            raise ConfigError("必须提供 html_dir（HTML 文件所在目录；图片模式可留空）")
+        # 只有"提取"才需要 HTML 目录：图片模式输入是图片、排序/导出 JSON 与目录无关
+        _action = str((payload or {}).get("action") or "extract").strip().lower()
+        _needs_html = (_action == "extract") and (mode != "pic")
+        if not spec.get("html_dir") and _needs_html:
+            raise ConfigError("必须提供 html_dir（HTML 文件所在目录；图片模式可省略）")
 
         spec.setdefault("mapping_path", DEFAULT_MAPPING)
         # 目标位置（机构 / 图片类别 / 比赛标签）：请求里显式给的优先，其次档案的 target_label。

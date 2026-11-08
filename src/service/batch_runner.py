@@ -19,7 +19,7 @@
 ``data_mode``                   ``'html'`` / ``'pic'`` / ``'bd'``
 ``data_storage``                ``{机构或图片类别: {编号: [4 个槽位]}}``
 ``bd_data_storage``             ``{比赛标签: {code, home, away, scores, html_file}}``
-``get_info``                    ``src.Excel_Info``（坐标计算）
+``get_info``                    ``src.excel.Excel_Info``（坐标计算）
 ``mapping`` / ``pic_mapping``   机构 / 图片类别的表头映射
 ``excel_path`` / ``sheet_name`` JC 目标工作簿与 sheet
 ``bd_excel_path`` / ``bd_sheet_name``    北单目标工作簿与 sheet
@@ -40,9 +40,10 @@ import os
 import re
 from datetime import datetime
 
-from src import ai_alignment, ai_parser
-from src.exporter import collect_export_write_ops, collect_sort_stats
-from src.log_setup import logger
+from src.ai import ai_alignment
+from src.ai import ai_parser
+from src.excel.exporter import collect_export_write_ops, collect_sort_stats
+from src.common.log_setup import logger
 
 
 class BatchRunnerMixin:
@@ -157,12 +158,18 @@ class BatchRunnerMixin:
         """
         # 机构名：优先 category_override，其次 pred 的 label/category，最后从文件名推断
         default_category = os.path.splitext(os.path.basename(source_file or ""))[0] if source_file else ""
+        # 多文件任务里每条预测各自带来源（_source），落位必须也能回落到它，
+        # 否则 category="" → 命中"分类不存在" → 整批 skipped（Bug 2026-11-8_5）
         applied = 0
         skipped = 0
         wdl_written = 0
         for pred in predictions:
+            # 显式覆盖 > 预测自带 label/category > 该条预测自己的来源文件名 > 调用方来源
             category = (category_override or pred.get("label", "")
-                        or pred.get("category", "") or default_category)
+                        or pred.get("category", "")
+                        or (os.path.splitext(os.path.basename(str(pred.get("_source") or "")))[0]
+                            if pred.get("_source") else "")
+                        or default_category)
             code = str(pred.get("code", "")).zfill(3)
             scores = pred.get("scores", [])
             # 扁平化 scores
@@ -355,7 +362,21 @@ class BatchRunnerMixin:
                 logger.exception(f"排序写入失败 - 列: {column}")
         return write_ops, dict_counter
 
-    def export_json_file(self):
+    def build_json_rows(self) -> dict:
+        """把数据中枢转成 ``编号 → {分类/机构: 槽位}``
+
+        这是"保存汇总 JSON"的数据结构，**排序也直接复用它**，
+        保证"统计口径 == 落盘口径"。
+        """
+        rows = {}
+        for category, codes in (self.data_storage or {}).items():
+            if not isinstance(codes, dict):
+                continue
+            for code, scores in codes.items():
+                rows.setdefault(str(code), {})[category] = list(scores or [])
+        return rows
+
+    def export_json_file(self, date_str: str = None, merge: bool = False):
         """写出当日汇总 JSON（纯逻辑）
 
         - HTML / JC / 图片：``json/<日期>.json``（转置为 编号 → {机构: 槽位}）
@@ -370,7 +391,7 @@ class BatchRunnerMixin:
                 os.makedirs("./json")
 
             if self.data_mode == 'bd':
-                json_path = f"./json/bd_{datetime.now().strftime('%Y-%m-%d')}.json"
+                json_path = f"./json/bd_{date_str or datetime.now().strftime('%Y-%m-%d')}.json"
                 # BD 格式：{label: {code, home, away, scores}}
                 export_data = {}
                 for label, info in self.bd_data_storage.items():
@@ -396,7 +417,21 @@ class BatchRunnerMixin:
                         new_json_data[code] = {}
                     new_json_data[code][category] = scores
 
-            json_path = f"./json/{datetime.now().strftime('%Y-%m-%d')}.json"
+            json_path = f"./json/{date_str or datetime.now().strftime('%Y-%m-%d')}.json"
+            if merge and os.path.isfile(json_path):
+                # 累加模式：以旧文件为基线，本次结果覆盖同一"编号×分类"
+                try:
+                    with open(json_path, "r", encoding="utf-8") as f:
+                        old = json.load(f) or {}
+                    for code, cats in old.items():
+                        if not isinstance(cats, dict):
+                            continue
+                        base = dict(cats)
+                        base.update(new_json_data.get(code) or {})
+                        new_json_data[code] = base
+                    logger.info(f"已合并上次的汇总 JSON: {json_path}")
+                except Exception:
+                    logger.exception(f"合并旧 JSON 失败，将按本次结果覆盖: {json_path}")
             with open(json_path, 'w', encoding='utf-8') as f:
                 json.dump(new_json_data, f, ensure_ascii=False, indent=4)
             message = f"JSON文件导出成功: {json_path}"

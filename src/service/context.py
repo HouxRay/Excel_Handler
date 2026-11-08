@@ -21,9 +21,10 @@
 ``selected_item_name()`` 不读左侧单选列表，而是**用任务参数指定的目标**
 （客户要求"直接填入我选中的那个预测者"，服务版由调用方明确告知是谁）。
 """
-from src.BD_Handler import load_bd_config
-from src.data_loader import load_pic_config, reinitialize_data
-from src.log_setup import logger
+import os
+from src.sources.BD_Handler import load_bd_config
+from src.excel.data_loader import load_pic_config, reinitialize_data
+from src.common.log_setup import logger
 from src.service.batch_runner import BatchRunnerMixin
 
 
@@ -43,7 +44,9 @@ class ServiceContext(BatchRunnerMixin):
 
         self.excel_path = spec.get("excel_path") or ""
         self.sheet_name = spec.get("sheet") or None
-        self.file_path = spec.get("html_dir") or ""
+        # 图片模式允许不给 html_dir；但初始化时行号映射需要一个**存在的**目录，
+        # 缺省时回落到工作簿所在目录（Bug 2026-11-8_4）
+        self.file_path = (spec.get("html_dir") or "").strip() or os.path.dirname(self.excel_path) or ""
         self.mapping_path = spec.get("mapping_path") or "mapping/mapping_data.txt"
 
         self.bd_excel_path = spec.get("bd_excel_path") or self.excel_path
@@ -79,6 +82,13 @@ class ServiceContext(BatchRunnerMixin):
         self.url = result["url"]
         self.data_storage = result["data_storage"]
         self.excel_first_columns = result["excel_name"]
+        if not self.excel_first_columns:
+            # 早失败：否则会拖到提交阶段表现为"每个编号都定位失败"，极难排查
+            from src.service.jobs import JobError
+            raise JobError(
+                "CONFIG_ERROR",
+                f"工作簿行号映射为空（excel_path={self.excel_path!r}, sheet={self.sheet_name!r}）："
+                "请确认工作表名正确、且该表 A 列有数据")
 
         # 图片类别（与桌面版一致：无论当前模式都会加载，供按需切换）
         self.pic_categories, self.pic_mapping, self.data_storage = load_pic_config(
@@ -112,6 +122,55 @@ class ServiceContext(BatchRunnerMixin):
         """某目标下已知的编号列表（供预览提示用）"""
         key = target if target is not None else self.target
         return sorted((self.data_storage.get(key) or {}).keys())
+
+    def load_existing_values(self) -> int:
+        """把工作簿里**已有的**数据读进 ``data_storage``（供"排序"这类只读动作）
+
+        **为什么需要**：服务版每个任务都新建上下文，``data_storage`` 初始是空槽，
+        而排序统计的是"表里已有的比分" → 不载入则统计恒为 0（Bug 2026-11-8_6）。
+
+        **只用于排序/汇总 JSON**，不能用于 extract —— 否则"不覆盖已有值"会把
+        新数据全部当成"已有"而跳过。
+
+        Returns: 实际载入的编号条数
+        """
+        import openpyxl
+
+        filled = 0
+        try:
+            wb = openpyxl.load_workbook(self.excel_path, read_only=True, data_only=True)
+            ws = wb[self.sheet_name] if self.sheet_name else wb.active
+        except Exception:
+            logger.exception(f"载入工作簿失败，排序将按空数据统计: {self.excel_path}")
+            return 0
+        try:
+            for item in list(getattr(self, "left_items", []) or []):
+                ex_header = (self.mapping or {}).get(item)
+                slots = self.data_storage.get(item)
+                if not ex_header or not isinstance(slots, dict):
+                    continue
+                for code in list(slots.keys()):
+                    try:
+                        row, col = self.get_info.get_location(
+                            code, ex_header, self.excel_first_columns)
+                    except Exception:
+                        continue
+                    if row is None or col is None:
+                        continue
+                    try:
+                        vals = [ws.cell(row=row, column=col + i).value for i in range(4)]
+                    except Exception:
+                        continue
+                    if any(v not in (None, "") for v in vals):
+                        slots[code] = ["" if v is None else str(v) for v in vals]
+                        filled += 1
+        finally:
+            try:
+                wb.close()
+            except Exception:
+                pass
+        logger.info(f"已载入工作簿现有数据 {filled} 条（供排序统计）")
+        return filled
 
     def describe(self) -> dict:
         """一行摘要（写日志/返回响应时用）"""

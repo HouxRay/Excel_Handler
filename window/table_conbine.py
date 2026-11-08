@@ -3,8 +3,8 @@ from window.table_qt_2 import PathSelector
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtWidgets import QApplication, QMessageBox, QDialog, QLabel, QVBoxLayout
 from PyQt5.QtCore import Qt
-from src.zip_handler import ensure_extracted, cleanup_temp_dirs
-from src.log_setup import logger
+from src.common.zip_handler import ensure_extracted, cleanup_temp_dirs
+from src.common.log_setup import logger
 import sys
 
 
@@ -29,6 +29,10 @@ def _show_startup_splash(parent=None, message="🚀 正在启动..."):
 
 
 def run():
+    # 提示词自举与旧配置迁移（txt 优先；缺失则从内置默认导出，用户无需手抄）
+    from src.ai import ai_config as _ai_cfg  # noqa: E402
+    _ai_cfg.migrate_legacy_prompts()
+    _ai_cfg.ensure_prompt_files()
     app = QApplication(sys.argv)
 
     # 显示启动加载提示

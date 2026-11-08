@@ -10,8 +10,8 @@ import re
 import glob
 from collections import Counter, defaultdict
 from openpyxl import load_workbook
-from src.Excel_Writer import ExcelWriter
-from src.mapping_manager import apply_keyboard_mappings
+from src.excel.Excel_Writer import ExcelWriter
+from src.common.mapping_manager import apply_keyboard_mappings
 
 
 def parse_bd_summary(html_path: str) -> list[dict]:

@@ -65,6 +65,7 @@ WORKDIR /app
 COPY service_main.py ./
 COPY src ./src
 COPY mapping ./mapping
+COPY prompts ./prompts
 COPY entrypoint.sh ./
 RUN chmod +x /app/entrypoint.sh
 

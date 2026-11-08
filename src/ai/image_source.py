@@ -14,7 +14,7 @@ import shutil
 import tempfile
 from datetime import datetime
 
-from src.app_paths import app_root, runtime_subdir
+from src.common.app_paths import app_root, runtime_subdir
 
 SUPPORTED_IMAGE_EXTS = {'.png', '.jpg', '.jpeg', '.bmp'}
 SUPPORTED_HTML_EXTS = {'.html', '.htm'}

@@ -21,7 +21,7 @@ class ExcelWriteWorker(QObject):
 
     def run(self):
         try:
-            from src.Excel_Writer import ExcelWriter
+            from src.excel.Excel_Writer import ExcelWriter
 
             writer = ExcelWriter(self.excel_path, self.sheet_name)
             total = len(self.write_ops)
@@ -70,7 +70,9 @@ class BatchAIWorker(QObject):
         self._cancelled = True
 
     def run(self):
-        from src import ai_alignment, ai_handler, ai_storage
+        from src.ai import ai_alignment
+        from src.ai import ai_handler
+        from src.ai import ai_storage
 
         failed = []
         total = len(self.jobs)

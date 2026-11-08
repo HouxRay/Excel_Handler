@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTableWidget,
                              QLabel, QComboBox)
 from PyQt5.QtCore import Qt
 
-from src import ai_storage
+from src.ai import ai_storage
 
 
 class AiHistoryDialog(QDialog):

@@ -14,12 +14,26 @@ import sys
 def app_root() -> str:
     """软件所在目录。
 
-    - **源码运行**：仓库根目录（本文件上溯两级）
     - **打包运行**：**exe 所在目录**，而不是 ``sys._MEIPASS``
+    - **源码运行**：向上查找"包含 ``src/`` 目录"的那一层，即仓库根目录
+
+    **为什么用标记查找而不是固定上溯级数**：本文件原在 ``src/`` 下，上溯两级即仓库根；
+    重构搬到 ``src/common/`` 后，固定上溯两级会落到 ``src/``，导致 ``txt/``、``pic/``、
+    ``mapping/``、``prompts/`` 这些运行时目录**全部定位错**（表现为数据"写入成功但找不到"）。
     """
     if getattr(sys, "frozen", False):
         return os.path.dirname(os.path.abspath(sys.executable))
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    here = os.path.dirname(os.path.abspath(__file__))
+    current = here
+    for _ in range(5):
+        if os.path.isdir(os.path.join(current, "src")):
+            return current
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+    # 兜底：非常规布局下退回"上溯两级"的老行为
+    return os.path.dirname(os.path.dirname(here))
 
 
 def runtime_subdir(name: str) -> str:

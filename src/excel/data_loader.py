@@ -13,7 +13,7 @@ def _resolve_mapping_pic_path():
     """
     candidates = [os.path.join("mapping", "mapping_pic.txt")]
     try:
-        from src.app_paths import app_root
+        from src.common.app_paths import app_root
         candidates.append(os.path.join(app_root(), "mapping", "mapping_pic.txt"))
     except Exception:
         pass
@@ -119,8 +119,8 @@ def reinitialize_data(file_path, excel_path, sheet_name, mapping_path, logger):
     Returns: dict 包含 get_info, top_data, left_items, excel_name,
              fixed_values, mapping, header_bases, url, data_storage
     """
-    from src.Excel_Info import GetWriteInfo
-    from src.Excel_Writer import ExcelWriter
+    from src.excel.Excel_Info import GetWriteInfo
+    from src.excel.Excel_Writer import ExcelWriter
 
     get_info = GetWriteInfo(file_path, excel_path, sheet_name, mapping_path)
     top_data = get_info.get_tabel_info()

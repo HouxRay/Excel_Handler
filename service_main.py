@@ -35,11 +35,15 @@ def _prepare_headless():
     from PyQt5.QtWidgets import QApplication
     _QT_APP = QApplication.instance() or QApplication(sys.argv[:1])
 
-    from src.Excel_Writer import headless_confirm, set_confirm_handler
+    from src.excel.Excel_Writer import headless_confirm, set_confirm_handler
     set_confirm_handler(headless_confirm)
 
-    from src.log_setup import setup_logger
+    from src.common.log_setup import setup_logger
     setup_logger(None)
+
+    from src.ai import ai_config as _ai_cfg
+    _ai_cfg.migrate_legacy_prompts()
+    _ai_cfg.ensure_prompt_files()
     return _QT_APP
 
 
@@ -55,7 +59,7 @@ def main(argv=None) -> int:
 
     _prepare_headless()
 
-    from src.log_setup import logger
+    from src.common.log_setup import logger
     from src.service.api import create_app
     from src.service.config import ServiceConfig, VERSION
     from src.service.jobs import JobStore

@@ -25,14 +25,19 @@
 ============================  ============================================
 """
 import glob
+import json
 import os
 import threading
 import traceback
 
 from flask import Flask, jsonify, request
 
-from src import ai_alignment, ai_handler, ai_storage, image_source, zip_handler
-from src.log_setup import logger
+from src.ai import ai_alignment
+from src.ai import ai_handler
+from src.ai import ai_storage
+from src.ai import image_source
+from src.common import zip_handler
+from src.common.log_setup import logger
 from src.service.config import ConfigError, ServiceConfig, VERSION
 from src.service.context import build_context
 from src.service.jobs import QUEUED, JobError, JobStore
@@ -151,9 +156,10 @@ def create_app(config: ServiceConfig = None, store: JobStore = None,
         if action == "extract" and not match_date:
             return _error(400, "MISSING_MATCH_DATE",
                           "extract 必须提供 match_date（工作簿可能含多天预测，服务不会猜）")
-        if action == "extract" and not spec.get("target_name"):
+        # 机构模式下 target_name 可省略（按文件名各自落位）；图片模式必须显式指定分类
+        if action == "extract" and spec.get("mode") == "pic" and not spec.get("target_name"):
             return _error(400, "MISSING_TARGET",
-                          "extract 必须提供 target_name（要写入哪个机构 / 图片类别）")
+                          "图片模式必须提供 target_name（要写入哪个图片分类）")
 
         inputs, input_dirs, input_zips = _collect_inputs(payload, job_id_hint=None)
         if action == "extract" and not inputs:
@@ -167,6 +173,9 @@ def create_app(config: ServiceConfig = None, store: JobStore = None,
             "input_dirs": input_dirs,
             "input_zips": input_zips,
             "target_name": spec.get("target_name", ""),
+            "sort": bool(payload.get("sort")),
+            "reuse_previous": payload.get("reuse_previous", True) is not False,
+            "json_path": str(payload.get("json_path") or "").strip(),
         }, status=QUEUED)
 
         threading.Thread(target=_run_job, args=(job["job_id"],),
@@ -217,6 +226,9 @@ def create_app(config: ServiceConfig = None, store: JobStore = None,
                         path, mode=mode, target_bd_code=target_bd_code,
                         whitelist=whitelist)
                 preds = result.get("predictions") or []
+                for _p in preds:
+                    if isinstance(_p, dict):
+                        _p.setdefault("_source", path)
                 predictions.extend(preds)
                 try:
                     ai_storage.save_ai_result(result, source_file=path, mode=mode)
@@ -235,16 +247,43 @@ def create_app(config: ServiceConfig = None, store: JobStore = None,
         applied = ctx.apply_predictions(predictions,
                                        target_override=job.get("target_name") or None)
 
-        items = []
-        known = set(ctx.data_storage.get(job.get("target_name") or "", {}) or {})
+        # 逐条解析"这条落在哪个分类"，与 apply_predictions 同一规则：
+        # 显式 target_name > 预测自带 label（来自文件名）> 源文件名去扩展名
+        explicit = (job.get("target_name") or "").strip()
+        items, unresolved, written_targets = [], [], set()
         for pred in predictions:
             code = str(pred.get("code", "")).zfill(3)
-            would_write = (code in known) if ctx.data_mode != "bd" else bool(ctx.bd_data_storage)
+            label = str(pred.get("label") or "").strip()
+            source = pred.get("_source") or ""
+            src_name = os.path.basename(source) if source else ""
+            guess = explicit or label or os.path.splitext(src_name)[0]
+
+            if ctx.data_mode == "bd":
+                would_write, target_here = bool(ctx.bd_data_storage), "bd"
+            elif not guess or guess not in ctx.data_storage:
+                would_write, target_here = False, guess
+                unresolved.append({
+                    "code": code, "input": src_name, "target": guess,
+                    "reason": ("无法确定目标（文件名未匹配到映射）" if not guess
+                               else "目标不存在（检查映射与 Excel 白名单）"),
+                })
+            else:
+                target_here = guess
+                has_code = code in (ctx.data_storage.get(guess, {}) or {})
+                would_write = has_code
+                if has_code:
+                    written_targets.add(guess)
+                else:
+                    unresolved.append({
+                        "code": code, "input": src_name, "target": guess,
+                        "reason": "该分类下没有此编号",
+                    })
             items.append({
                 "code": code,
                 "wdl": pred.get("wdl") or [],
                 "scores": pred.get("scores") or [],
                 "would_write": would_write,
+                "target": target_here,
             })
 
         jobs.mark_preview(job_id, {
@@ -256,15 +295,42 @@ def create_app(config: ServiceConfig = None, store: JobStore = None,
                 "failed_inputs": len(failed_inputs),
                 "dirs": len(job.get("input_dirs") or []),
                 "zips": len(job.get("input_zips") or []),
+                "targets": sorted(written_targets),
+                "unresolved": len(unresolved),
             },
             "predictions": predictions,
             "failed_inputs": failed_inputs,
+            "unresolved_items": unresolved[:50],
             "progress": {"done": len(job.get("inputs") or []),
                          "total": len(job.get("inputs") or [])},
         })
 
+    def _load_sort_source(ctx, job) -> str:
+        """把汇总 JSON 灌回 data_storage（统计口径 = 落盘口径）并返回文件路径"""
+        date_str = (job.get("match_date") or "").strip()
+        json_path = (job.get("json_path") or "").strip() or (
+            f"./json/{date_str}.json" if date_str else "")
+        if not json_path or not os.path.isfile(json_path):
+            raise JobError(
+                "BAD_INPUT",
+                f"排序需要汇总 JSON：{json_path or '(未指定)'} 不存在。"
+                "请先执行 extract（会按 match_date 保存汇总 JSON），或在请求里传 json_path")
+        try:
+            with open(json_path, "r", encoding="utf-8") as f:
+                rows = json.load(f) or {}
+        except Exception as e:
+            raise JobError("BAD_INPUT", f"读取汇总 JSON 失败: {json_path} → {e}")
+        for code, cats in rows.items():
+            if not isinstance(cats, dict):
+                continue
+            for name, scores in cats.items():
+                ctx.data_storage.setdefault(name, {})[str(code)] = list(scores or [])
+        logger.info(f"排序数据源: {json_path}（{len(rows)} 个编号）")
+        return json_path
+
     def _do_sort(job_id, job, ctx):
         """排序：统计 + 生成写入操作（预览里给出统计结果）"""
+        _load_sort_source(ctx, job)
         ops, counter = ctx.collect_sort_ops()
         stats = {k: v for k, v in list(counter.items())[:50]}
         jobs.mark_preview(job_id, {
@@ -300,6 +366,8 @@ def create_app(config: ServiceConfig = None, store: JobStore = None,
                     ctx.apply_predictions(job.get("predictions") or [],
                                            target_override=job.get("target_name") or None)
                 result = _write_back(ctx, job, excel_path)
+                if job["action"] == "extract" and job.get("sort"):
+                    result["sort"] = _sort_after_write(ctx, job, excel_path)
                 result["locate_failures"] = getattr(ctx, "last_locate_failures", [])
                 if ctx.data_mode == "bd" and job["action"] == "extract":
                     pass
@@ -315,13 +383,68 @@ def create_app(config: ServiceConfig = None, store: JobStore = None,
             jobs.fail(job_id, f"{type(e).__name__}: {e}")
             return _error(500, "COMMIT_FAILED", f"{type(e).__name__}: {e}")
 
+    SORT_ROW = 84          # 与桌面版一致的统计行
+
+    def _clear_sort_row(excel_path, sheet_name) -> int:
+        """清空排序统计行（第 84 行）的旧内容
+
+        Bug 2026-11-8_7：`collect_sort_ops()` 只给"本次有统计的编号"生成写入，
+        上一批范围更大时，多出来的编号会残留在第 84 行 → 得到新旧混合的统计。
+        写之前先整行清空，保证行内容**恒等于最近一次统计**。
+        """
+        import openpyxl
+
+        cleared = 0
+        wb = None
+        try:
+            wb = openpyxl.load_workbook(excel_path)
+            ws = wb[sheet_name] if sheet_name else wb.active
+            for cell in list(ws[SORT_ROW]):
+                if cell.value not in (None, ""):
+                    ws.cell(row=SORT_ROW, column=cell.column).value = None
+                    cleared += 1
+            if cleared:
+                wb.save(excel_path)
+                logger.info(f"已清空排序统计行（第 {SORT_ROW} 行）{cleared} 个单元格")
+        except Exception:
+            logger.exception(f"清理排序统计行失败，可能残留旧统计: {excel_path}")
+        finally:
+            try:
+                if wb is not None:
+                    wb.close()
+            except Exception:
+                pass
+        return cleared
+
+    def _sort_after_write(ctx, job, excel_path) -> dict:
+        """写入后：保存汇总 JSON → 读回 → 统计 → 写回统计区域
+
+        服务版排序口径 = **落盘口径**（避免"内存有、表里没有"的错位）。
+        """
+        date_str = (job.get("match_date") or "").strip() or None
+        ok, message = ctx.export_json_file(
+            date_str=date_str, merge=bool(job.get("reuse_previous", True)))
+        if not ok:
+            raise JobError("COMMIT_FAILED", f"保存汇总 JSON 失败: {message}")
+        json_path = _artifact_path(message)
+        job2 = dict(job, json_path=json_path)
+        _load_sort_source(ctx, job2)
+        ops, counter = ctx.collect_sort_ops()
+        cleared = _clear_sort_row(excel_path, job["spec"].get("sheet"))
+        if ops:
+            _apply_ops(excel_path, job["spec"].get("sheet"), ops)
+        return {"codes": len(counter), "ops": len(ops), "json": json_path,
+                "cleared": cleared}
+
     def _write_back(ctx, job, excel_path) -> dict:
         """把数据中枢写回 Excel（在锁内调用）"""
-        from src.BD_Handler import export_bd_data
-        from src.Excel_Writer import ExcelWriter
+        from src.sources.BD_Handler import export_bd_data
+        from src.excel.Excel_Writer import ExcelWriter
 
         if job["action"] == "sort":
+            _load_sort_source(ctx, job)     # 提交时上下文是新建的，同样要先载入 JSON
             ops, counter = ctx.collect_sort_ops()
+            _clear_sort_row(excel_path, job["spec"].get("sheet"))
             _apply_ops(excel_path, job["spec"].get("sheet"), ops)
             return {"written_ops": len(ops), "codes": len(counter)}
 
@@ -336,9 +459,23 @@ def create_app(config: ServiceConfig = None, store: JobStore = None,
                 raise JobError("COMMIT_FAILED", message)
             return {"written": len(infos), "message": message, "invalid": invalid[:20]}
 
-        ops, invalid_all, missing = ctx.collect_all_export_ops()
+        target = (job.get("target_name") or "").strip()
+        if ctx.data_mode == "pic":
+            # 图片模式的目标是"图片分类"，必须走带 is_pic=True 的分类导出；
+            # 走全机构汇总永远收集不到操作（历史缺陷：提取成功但提交报"没有可写入的数据"）
+            pic_categories = getattr(ctx, "pic_categories", []) or []
+            if target not in pic_categories:
+                raise JobError(
+                    "BAD_INPUT",
+                    f"目标 {target!r} 不是图片分类（可用: {', '.join(pic_categories[:12])}）")
+            ops, invalid_all = ctx.collect_category_export_ops(target, is_pic=True)
+            missing = []
+        else:
+            ops, invalid_all, missing = ctx.collect_all_export_ops()
         if not ops:
-            raise JobError("BAD_INPUT", "没有可写入的数据（目标机构可能没有对应编号）")
+            raise JobError(
+                "BAD_INPUT",
+                f"没有可写入的数据（目标 {target or '全部分类'} 未匹配到可写位置）")
         _apply_ops(excel_path, job["spec"].get("sheet"), ops)
         return {"written_ops": len(ops), "invalid": invalid_all[:20], "missing": missing}
 
@@ -357,7 +494,7 @@ def create_app(config: ServiceConfig = None, store: JobStore = None,
 
 def _apply_ops(excel_path: str, sheet, ops) -> None:
     """把写入操作落进工作簿：批量写 + 一次 save（与桌面版同一条路径）"""
-    from src.Excel_Writer import ExcelWriter
+    from src.excel.Excel_Writer import ExcelWriter
 
     writer = ExcelWriter(excel_path, sheet)
     for line, col, value in ops:

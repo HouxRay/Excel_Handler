@@ -5,10 +5,10 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QGroupBox, QWidget, QHeaderView, QCheckBox, QTextEdit)
 from PyQt5.QtCore import QSettings
 from openpyxl import load_workbook
-from src.mapping_manager import (get_match_dict, get_default_match_dict, save_match_dict,
+from src.common.mapping_manager import (get_match_dict, get_default_match_dict, save_match_dict,
                                   get_keyboard_mappings, get_default_keyboard_mappings,
                                   save_keyboard_mappings)
-from src import ai_config
+from src.ai import ai_config
 
 
 class SettingsDialog(QDialog):
@@ -86,7 +86,7 @@ class SettingsDialog(QDialog):
         path_layout.addWidget(txt_group)
 
         # -- AI 数据目录 --
-        from src import ai_storage as _ai_storage
+        from src.ai import ai_storage as _ai_storage
         ai_dir_group = QGroupBox("AI 数据")
         ai_dir_layout = QHBoxLayout(ai_dir_group)
         ai_dir_layout.addWidget(QLabel("AI 数据目录:"))
@@ -520,7 +520,7 @@ class SettingsDialog(QDialog):
 
     def _open_ai_dir(self):
         """在系统文件管理器中打开 AI 数据目录"""
-        from src import ai_storage
+        from src.ai import ai_storage
         if not os.path.exists(ai_storage.AI_DIR):
             QMessageBox.warning(self, "提示", "AI 数据目录不存在")
             return

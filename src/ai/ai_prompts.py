@@ -1,5 +1,5 @@
 """AI 提示词构建 — 支持白名单编号约束 + 目标日期"""
-from src import ai_config
+from src.ai import ai_config
 
 
 def _format_whitelist(whitelist: dict) -> str:

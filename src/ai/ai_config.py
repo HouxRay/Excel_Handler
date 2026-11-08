@@ -1,6 +1,7 @@
 """AI 配置管理：API Key（加密存储）、模型、基址，存 config.ini"""
 import base64
 import hashlib
+import logging
 import os
 import uuid
 
@@ -8,6 +9,8 @@ from PyQt5.QtCore import QSettings
 
 DEFAULT_MODEL = "deepseek-v4-flash"
 DEFAULT_BASE = "https://api.deepseek.com"
+logger = logging.getLogger(__name__)
+
 _ENC_PREFIX = "enc:"  # 加密值前缀，用于区分明文/密文
 
 # 图片识别路径（配置键 ai/image_pipeline）
@@ -271,48 +274,168 @@ def save_image_pipeline(mode: str):
         QSettings("config.ini", QSettings.IniFormat).setValue("ai/image_pipeline", mode)
 
 
-def get_system_prompt() -> str:
-    """读取 HTML/文本提示词（无则返回默认）"""
-    settings = QSettings("config.ini", QSettings.IniFormat)
-    return settings.value("ai/system_prompt", DEFAULT_SYSTEM_PROMPT) or DEFAULT_SYSTEM_PROMPT
+# --- 提示词存储：外部 txt 优先，内置默认兜底 -------------------------------
+#
+# **为什么不再只写 config.ini**：QSettings 会把多行 Markdown 转义成 \xNN 形式
+# （形如 system_prompt="# Role \x6570\x636e..."），外部既读不懂也无法 diff。
+# 现在提示词以独立文本文件保存在 <软件目录>/prompts/ 下，可直接用编辑器修改，
+# 改完重启程序即生效；文件缺失或为空时回退到内置默认值，保证任何情况下都能工作。
+
+PROMPT_FILES = {
+    "system_prompt": "system_prompt.txt",
+    "system_prompt_pic": "system_prompt_pic.txt",
+    "system_prompt_bd": "system_prompt_bd.txt",
+}
+
+PROMPT_DEFAULTS = {
+    "system_prompt": DEFAULT_SYSTEM_PROMPT,
+    "system_prompt_pic": DEFAULT_SYSTEM_PROMPT_PIC,
+    "system_prompt_bd": DEFAULT_SYSTEM_PROMPT_BD,
+}
+
+
+def prompts_dir() -> str:
+    """提示词目录：软件目录下的 ``prompts/``（打包后即 exe 同目录）"""
+    from src.common import app_paths
+
+    return app_paths.runtime_subdir("prompts")
+
+
+def prompt_file(key: str) -> str:
+    """某个提示词对应的 txt 文件路径"""
+    return os.path.join(prompts_dir(), PROMPT_FILES[key])
+
+
+def read_prompt_file(key: str) -> str:
+    """读取 txt；不存在 / 空白 / 读失败 → 返回空串（调用方回退内置默认）"""
+    path = prompt_file(key)
+    try:
+        if not os.path.isfile(path):
+            return ""
+        with open(path, "r", encoding="utf-8") as f:
+            text = f.read()
+        return "" if not text.strip() else text
+    except Exception:
+        logger.exception(f"读取提示词文件失败，将回退内置默认: {path}")
+        return ""
+
+
+def write_prompt_file(key: str, text: str) -> bool:
+    """写入 txt；内容为空白则删除该文件（等于"恢复默认"）"""
+    path = prompt_file(key)
+    try:
+        os.makedirs(prompts_dir(), exist_ok=True)
+        if not (text or "").strip():
+            if os.path.isfile(path):
+                os.remove(path)
+            return True
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+        return True
+    except Exception:
+        logger.exception(f"写入提示词文件失败: {path}")
+        return False
 
 
 def _collapse_ws(text: str) -> str:
-    """把所有空白折叠成单个空格，用于"是否仍是默认提示词"的宽松比较。
+    """把所有空白折叠成单个空格，用于"是否仍是旧版默认提示词"的宽松比较。
 
     QSettings(IniFormat) 读回多行文本时可能把换行变成空格，直接字符串相等会失效。
     """
     return " ".join((text or "").split())
 
 
-def get_system_prompt_pic() -> str:
-    """读取图片提示词。
+def _legacy_prompt(key: str) -> str:
+    """从 config.ini 读旧版提示词（仅用于兼容迁移）"""
+    try:
+        return QSettings("config.ini", QSettings.IniFormat).value(f"ai/{key}", "") or ""
+    except Exception:
+        return ""
 
-    **自动迁移**：若 config.ini 里存的仍是旧版默认提示词（说明用户从未改过它），
-    直接返回新默认 —— 否则升级后新增的「胜负平」规则不会生效，用户会莫名其妙
-    拿到半全场数据。比较时忽略空白差异（QSettings 往返可能改变空白）；
-    用户真正改动过内容的提示词一律不动。
+
+def _effective_prompt(key: str) -> str:
+    """当前生效值：txt → config.ini（旧版兼容）→ 内置默认
+
+    旧版默认提示词（``LEGACY_SYSTEM_PROMPT_PIC``）不算用户自定义，直接回退新默认
+    —— 否则升级后新增的规则不会生效。
     """
-    settings = QSettings("config.ini", QSettings.IniFormat)
-    stored = settings.value("ai/system_prompt_pic", "") or ""
-    if not stored or _collapse_ws(stored) == _collapse_ws(LEGACY_SYSTEM_PROMPT_PIC):
-        return DEFAULT_SYSTEM_PROMPT_PIC
-    return stored
+    text = read_prompt_file(key)
+    if text:
+        return text
+    stored = _legacy_prompt(key)
+    if stored and _collapse_ws(stored) != _collapse_ws(LEGACY_SYSTEM_PROMPT_PIC):
+        return stored
+    return PROMPT_DEFAULTS[key]
+
+
+def clear_legacy_prompt_keys():
+    """清掉 config.ini 里的旧提示词键（迁移完成后调用）"""
+    try:
+        settings = QSettings("config.ini", QSettings.IniFormat)
+        for key in PROMPT_FILES:
+            settings.remove(f"ai/{key}")
+    except Exception:
+        logger.exception("清理 config.ini 旧提示词键失败")
+
+
+def ensure_prompt_files() -> list:
+    """自举：把缺失的提示词导出成 txt（用户无需手抄现有内容）
+
+    Returns: 本次新创建的文件路径列表
+    """
+    created = []
+    for key in PROMPT_FILES:
+        if read_prompt_file(key):
+            continue
+        if write_prompt_file(key, _effective_prompt(key)):
+            created.append(prompt_file(key))
+    if created:
+        logger.info(f"已导出提示词文件 {len(created)} 个: {created}")
+    return created
+
+
+def migrate_legacy_prompts() -> list:
+    """把 config.ini 里的旧提示词迁移成 txt，随后清掉旧键
+
+    仅在 txt 尚不存在时迁移，避免覆盖用户已经手工改过的文件。
+    """
+    migrated = []
+    for key in PROMPT_FILES:
+        stored = _legacy_prompt(key)
+        if not stored.strip():
+            continue
+        if read_prompt_file(key):
+            continue
+        if write_prompt_file(key, stored):
+            migrated.append(prompt_file(key))
+    if migrated:
+        clear_legacy_prompt_keys()
+        logger.info(f"旧提示词已迁移到 txt: {migrated}")
+    return migrated
+
+
+def get_system_prompt() -> str:
+    """HTML / 文本模式提示词（txt → 旧配置 → 内置默认）"""
+    return _effective_prompt("system_prompt")
+
+
+def get_system_prompt_pic() -> str:
+    """图片模式提示词（txt → 旧配置 → 内置默认）"""
+    return _effective_prompt("system_prompt_pic")
 
 
 def get_system_prompt_bd() -> str:
-    """读取北单 BD 提示词（无则返回默认）"""
-    settings = QSettings("config.ini", QSettings.IniFormat)
-    return settings.value("ai/system_prompt_bd", DEFAULT_SYSTEM_PROMPT_BD) or DEFAULT_SYSTEM_PROMPT_BD
+    """结构化数据源模式提示词（txt → 旧配置 → 内置默认）"""
+    return _effective_prompt("system_prompt_bd")
 
 
 def save_system_prompts(html_prompt: str, pic_prompt: str, bd_prompt: str = None):
-    """保存提示词到 config.ini"""
-    settings = QSettings("config.ini", QSettings.IniFormat)
-    settings.setValue("ai/system_prompt", html_prompt)
-    settings.setValue("ai/system_prompt_pic", pic_prompt)
+    """保存提示词到 ``prompts/*.txt``（不再写 config.ini 的转义串）"""
+    write_prompt_file("system_prompt", html_prompt)
+    write_prompt_file("system_prompt_pic", pic_prompt)
     if bd_prompt is not None:
-        settings.setValue("ai/system_prompt_bd", bd_prompt)
+        write_prompt_file("system_prompt_bd", bd_prompt)
+    clear_legacy_prompt_keys()
 
 
 # --- 目标比赛日期管理（硬约束） ---

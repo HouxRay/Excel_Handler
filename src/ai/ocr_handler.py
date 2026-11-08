@@ -7,7 +7,9 @@ import os
 import re
 from datetime import datetime, timezone, timedelta
 
-from src import ai_client, ai_parser, ai_config
+from src.ai import ai_client
+from src.ai import ai_parser
+from src.ai import ai_config
 
 # --- 配置 ---
 SUPPORTED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp'}

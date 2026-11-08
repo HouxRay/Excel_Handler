@@ -1,8 +1,8 @@
 """AI 编排模块 — HTML/文本 → AI → 结构化预测结果"""
 import os
 
-from src import ai_client
-from src import ai_parser
+from src.ai import ai_client
+from src.ai import ai_parser
 
 
 def extract_predictions_from_html(html_file_path: str, excel_path: str = None,
@@ -34,7 +34,7 @@ def extract_predictions_from_html(html_file_path: str, excel_path: str = None,
 
     # 白名单：优先复用调用方预加载的（批量场景），否则按 mode 从 Excel 加载
     if whitelist is None and excel_path:
-        from src import ai_alignment
+        from src.ai import ai_alignment
         if mode == 'bd':
             whitelist = ai_alignment.load_bd_whitelist(excel_path, sheet_name)
         else:
@@ -42,7 +42,7 @@ def extract_predictions_from_html(html_file_path: str, excel_path: str = None,
 
     # 有白名单 → 白名单约束提示词 + 后端反幻觉过滤
     if whitelist is not None:
-        from src import ai_alignment
+        from src.ai import ai_alignment
         target_date = ai_alignment.detect_target_date(markdown_text)
         messages = ai_client.build_messages_with_whitelist(
             markdown_text, whitelist, target_date, mode, target_bd_code)
@@ -80,5 +80,5 @@ def extract_predictions_from_text(text: str) -> dict:
 
 def extract_predictions_from_image(image_path: str) -> dict:
     """图片 → OCR → AI → 结构化结果"""
-    from src import ocr_handler
+    from src.ai import ocr_handler
     return ocr_handler.extract_predictions_from_image(image_path)

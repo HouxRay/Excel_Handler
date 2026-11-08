@@ -8,7 +8,7 @@ import re
 from datetime import datetime, timezone, timedelta
 from openai import OpenAI
 
-from src import ai_config
+from src.ai import ai_config
 
 # 尝试导入 html2text
 try:
@@ -93,7 +93,7 @@ def build_messages_with_whitelist(markdown_text: str, whitelist: dict,
     mode: 'jc' 或 'bd'
     target_bd_code: BD 模式当前文件的目标 BD 号
     """
-    from src import ai_prompts
+    from src.ai import ai_prompts
     if mode == 'bd':
         return ai_prompts.build_bd_messages(markdown_text, whitelist, target_date, target_bd_code)
     return ai_prompts.build_jc_messages(markdown_text, whitelist, target_date)

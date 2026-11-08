@@ -12,7 +12,7 @@ def load_excel_whitelist(excel_path: str, sheet_name: str = None) -> dict:
     """
     if not excel_path:
         return {}
-    from src.Excel_Handler import ExcelHandler
+    from src.excel.Excel_Handler import ExcelHandler
     try:
         handler = ExcelHandler(excel_path, sheet_name)
         bases = handler.read_header_bases()
@@ -42,7 +42,7 @@ def load_bd_whitelist(excel_path: str, sheet_name: str = None) -> dict:
             ws = wb[sheet_name]
         else:
             ws = wb.active
-        from src.BD_Handler import find_bd_columns
+        from src.sources.BD_Handler import find_bd_columns
         col_map = find_bd_columns(ws)
         wb.close()
         whitelist = {}
